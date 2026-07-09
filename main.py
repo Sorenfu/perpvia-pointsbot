@@ -76,6 +76,48 @@ async def shop(i):
 
 @bot.event
 async def on_ready():
+
+    print(
+        f"Community OS Ready: {bot.user}"
+    )
+
+    try:
+
+        guild = discord.Object(
+            id=int(os.getenv("GUILD_ID"))
+        )
+
+        # 清理旧命令
+        bot.tree.clear_commands(
+            guild=guild
+        )
+
+        await bot.tree.sync(
+            guild=guild
+        )
+
+
+        # 重新同步当前命令
+        synced = await bot.tree.sync(
+            guild=guild
+        )
+
+
+        print(
+            "COMMAND SYNC SUCCESS:",
+            [
+                cmd.name
+                for cmd in synced
+            ]
+        )
+
+
+    except Exception as e:
+
+        print(
+            "COMMAND SYNC ERROR:",
+            repr(e)
+        )
     synced=await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     print('Ready',bot.user,[x.name for x in synced])
 
