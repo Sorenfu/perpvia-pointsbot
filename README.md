@@ -1,8 +1,8 @@
-Community OS Beta 1.0 Stable Final Fix
+Community OS v1 Running Version
 
-Fixes:
-- PostgreSQL schema auto sync
-- UTC time compatibility
-- Daily cooldown
-- Updated_at compatibility
-- Single main.py runtime
+Stable deploy baseline.
+
+Commands:
+/balance
+/daily
+/shop
