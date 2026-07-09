@@ -1,0 +1,6 @@
+daily: 20
+daily_cooldown_hours: 12
+message_reward: 1
+message_cooldown_seconds: 60
+message_daily_limit: 50
+invite_reward: 20
