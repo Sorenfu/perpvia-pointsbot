@@ -1,7 +1,11 @@
-Community OS Beta 1.0 Daily Response Fix
+Main.py Daily Fix
+
+Only replaces daily handler.
+Does not change runtime architecture.
 
 Fix:
-- Interaction defer
-- Avoid Discord timeout
-- Daily debug logging
-- Error handling
+- Discord defer
+- Daily database flow
+- Cooldown
+- Point add
+- Error logging
