@@ -31,6 +31,18 @@ async def store_invite(db, code: str, inviter_discord_id: int, uses: int = 0):
     )
 
 
+async def get_latest_invite_code(db, inviter_discord_id: int) -> str | None:
+    """Return the most recently created invite code we've stored for this
+    user, if any. Used so /invite reuses one link per person instead of
+    minting a new one every time (which would otherwise pile up invites in
+    the server, up to Discord's per-guild cap)."""
+    row = await db.fetchrow(
+        "SELECT code FROM invite_codes WHERE inviter_discord_id=$1 ORDER BY created_at DESC LIMIT 1",
+        int(inviter_discord_id),
+    )
+    return row["code"] if row else None
+
+
 async def handle_member_join(bot, member: discord.Member):
     guild = member.guild
     before = bot.invite_cache.get(guild.id, {})

@@ -7,7 +7,7 @@ from modules.admin import is_admin, log_admin
 from modules.users import ensure_user
 from modules.points import add_points
 from modules.tasks import create_task
-from modules.shop import create_product
+from modules.shop import create_product, list_all_products, set_product_status
 
 
 def admin_only(interaction: discord.Interaction) -> bool:
@@ -57,6 +57,52 @@ async def setup(bot: commands.Bot):
         product = await create_product(bot.db, name, price, role.id if role else None, description)
         await log_admin(bot.db, interaction.user.id, "ADMIN_ADD_PRODUCT", f"{product['id']} {name} {price}")
         await interaction.followup.send(f"Created product #{product['id']}: {name}", ephemeral=True)
+
+    @bot.tree.command(name="admin_products", description="Admin: list all products, including unlisted ones")
+    @app_commands.default_permissions(administrator=True)
+    async def admin_products(interaction: discord.Interaction):
+        if not admin_only(interaction):
+            await interaction.response.send_message("No permission.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        products = await list_all_products(bot.db)
+        if not products:
+            await interaction.followup.send("No products yet.", ephemeral=True)
+            return
+        lines = [
+            f"#{p['id']} **{p['name']}** - {p['price']} points - status: {p['status']}"
+            + (f" - role: {p['role_id']}" if p["role_id"] else "")
+            for p in products
+        ]
+        await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    @bot.tree.command(name="admin_list_product", description="Admin: list (re-activate) a product in the shop")
+    @app_commands.default_permissions(administrator=True)
+    async def admin_list_product(interaction: discord.Interaction, product_id: int):
+        if not admin_only(interaction):
+            await interaction.response.send_message("No permission.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        product = await set_product_status(bot.db, product_id, "ACTIVE")
+        if not product:
+            await interaction.followup.send(f"Product #{product_id} not found.", ephemeral=True)
+            return
+        await log_admin(bot.db, interaction.user.id, "ADMIN_LIST_PRODUCT", f"{product_id}")
+        await interaction.followup.send(f"Product #{product_id} ({product['name']}) is now listed in /shop.", ephemeral=True)
+
+    @bot.tree.command(name="admin_unlist_product", description="Admin: unlist (deactivate) a product from the shop")
+    @app_commands.default_permissions(administrator=True)
+    async def admin_unlist_product(interaction: discord.Interaction, product_id: int):
+        if not admin_only(interaction):
+            await interaction.response.send_message("No permission.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        product = await set_product_status(bot.db, product_id, "INACTIVE")
+        if not product:
+            await interaction.followup.send(f"Product #{product_id} not found.", ephemeral=True)
+            return
+        await log_admin(bot.db, interaction.user.id, "ADMIN_UNLIST_PRODUCT", f"{product_id}")
+        await interaction.followup.send(f"Product #{product_id} ({product['name']}) has been unlisted from /shop.", ephemeral=True)
 
     @bot.tree.command(name="admin_stats", description="Admin: show community stats")
     @app_commands.default_permissions(administrator=True)

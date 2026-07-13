@@ -8,6 +8,11 @@ async def list_products(db):
     return await db.fetch("SELECT * FROM products WHERE status='ACTIVE' ORDER BY id ASC")
 
 
+async def list_all_products(db):
+    """All products regardless of status, for admin management (/admin_products)."""
+    return await db.fetch("SELECT * FROM products ORDER BY id ASC")
+
+
 async def create_product(db, name: str, price: int, role_id: int | None = None, description: str | None = None):
     return await db.fetchrow(
         "INSERT INTO products (name, price, role_id, description) VALUES ($1, $2, $3, $4) RETURNING *",
@@ -15,6 +20,16 @@ async def create_product(db, name: str, price: int, role_id: int | None = None, 
         int(price),
         int(role_id) if role_id else None,
         description,
+    )
+
+
+async def set_product_status(db, product_id: int, status: str):
+    """Toggle a product on/off the shop (list/unlist) without deleting it,
+    so past orders still reference a real product row."""
+    return await db.fetchrow(
+        "UPDATE products SET status=$2 WHERE id=$1 RETURNING *",
+        int(product_id),
+        status,
     )
 
 
