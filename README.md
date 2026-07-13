@@ -47,6 +47,7 @@ python bot.py
 - Manage Roles
 - Read Message History
 - View Channels
+- **Manage Server（Manage Guild）** —— 必须给，否则邀请追踪（谁邀请了谁、/invite 复用同一条链接）会静默失效
 
 ## 命令
 
@@ -69,6 +70,9 @@ python bot.py
 - /admin_add_points
 - /admin_add_task
 - /admin_add_product
+- /admin_products（列出所有商品，含已下架）
+- /admin_list_product（重新上架商品）
+- /admin_unlist_product（下架商品）
 - /admin_stats
 
 ## 如果仍然启动失败

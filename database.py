@@ -21,7 +21,23 @@ class Database:
         sql_path = Path(__file__).with_name("init.sql")
         sql = sql_path.read_text(encoding="utf-8")
         async with self.pool.acquire() as conn:
-            await conn.execute(sql)
+            try:
+                await conn.execute(sql)
+            except asyncpg.exceptions.UndefinedColumnError as exc:
+                raise RuntimeError(
+                    "Schema init failed: one of the bot's tables already exists in "
+                    "this Postgres database from an older/partial deployment, but "
+                    "with different columns than this version expects "
+                    "(CREATE TABLE IF NOT EXISTS skips tables that already exist, "
+                    "so it never got fixed automatically). "
+                    "Fix: open the Postgres service in Railway -> Query, run:\n"
+                    "DROP TABLE IF EXISTS admin_logs, referrals, invite_codes, "
+                    "orders, products, checkins, user_tasks, tasks, points, users "
+                    "CASCADE;\n"
+                    "then redeploy this service so init.sql recreates everything "
+                    "fresh. Original error: "
+                    f"{exc}"
+                ) from exc
 
     async def execute(self, query: str, *args):
         async with self.pool.acquire() as conn:
