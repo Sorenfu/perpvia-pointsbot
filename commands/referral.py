@@ -1,37 +1,42 @@
+from __future__ import annotations
+
 import discord
-from modules import users, referral
+from discord.ext import commands
+from modules.users import ensure_user
+from modules.referral import store_invite, referral_stats
 
-async def setup(bot):
-    @bot.tree.command(name="invite", description="Create or view your referral invite")
-    async def invite_cmd(interaction: discord.Interaction):
-        if not interaction.guild or not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message("Use this command inside a server.", ephemeral=True)
+
+async def setup(bot: commands.Bot):
+    @bot.tree.command(name="invite", description="Create your invite link")
+    async def invite(interaction: discord.Interaction):
+        if interaction.guild is None or interaction.channel is None:
+            await interaction.response.send_message("Use this command inside a server channel.", ephemeral=True)
             return
-        user = await users.get_or_create_user(interaction.user)
-        try:
-            invite = await interaction.channel.create_invite(max_age=0, max_uses=0, unique=True, reason="Community OS referral")
-            await referral.save_invite_link(interaction.guild.id, invite.code, user["id"])
-            if hasattr(bot, "invite_cache"):
-                bot.invite_cache.setdefault(interaction.guild.id, {})[invite.code] = invite.uses or 0
-            total, rewarded, earned = await referral.get_referral_stats(user["id"])
-            await interaction.response.send_message(
-                f"🎁 **Your Referral Link**\n{invite.url}\n\n"
-                f"Invite reward: **+20 Points**\nFriend reward: **+10 Points after first valid message**\n\n"
-                f"Total: **{total}** | Rewarded: **{rewarded}** | Earned: **{earned} Points**",
-                ephemeral=True,
-            )
-        except Exception as exc:
-            await interaction.response.send_message(
-                "I could not create an invite. Please check that the bot has Create Invite permission.\n"
-                f"Error: {exc}",
-                ephemeral=True,
-            )
 
-    @bot.tree.command(name="referrals", description="View your referral stats")
-    async def referrals_cmd(interaction: discord.Interaction):
-        user = await users.get_or_create_user(interaction.user)
-        total, rewarded, earned = await referral.get_referral_stats(user["id"])
+        await ensure_user(bot.db, interaction.user)
+
+        try:
+            invite_obj = await interaction.channel.create_invite(
+                max_age=0,
+                max_uses=0,
+                unique=True,
+                reason=f"Community OS referral invite by {interaction.user.id}",
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message("Bot needs Create Invite permission in this channel.", ephemeral=True)
+            return
+
+        await store_invite(bot.db, invite_obj.code, interaction.user.id, invite_obj.uses or 0)
+        total, rewarded = await referral_stats(bot.db, interaction.user.id)
         await interaction.response.send_message(
-            f"🎁 **Referral Stats**\nTotal invites: **{total}**\nRewarded: **{rewarded}**\nEarned: **{earned} Points**",
+            f"Your invite link: {invite_obj.url}\nSuccessful rewarded invites: {rewarded}\nTotal tracked invites: {total}",
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="referrals", description="Show your referral stats")
+    async def referrals(interaction: discord.Interaction):
+        total, rewarded = await referral_stats(bot.db, interaction.user.id)
+        await interaction.response.send_message(
+            f"Referral stats:\nTotal tracked: {total}\nRewarded: {rewarded}\nReward rule: inviter +20, newcomer +10 after first valid message.",
             ephemeral=True,
         )

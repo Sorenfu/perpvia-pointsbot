@@ -1,35 +1,25 @@
-# Community OS Lite Beta 1.0.12
+# Community OS Lite Beta 1.0.12 - Fixed Source
 
-Railway-ready Discord积分商城系统。
+这是修复版完整源码包。
 
-## 功能
+## 本次修复
 
-- `/profile` 用户资料，自动注册用户
-- `/points` 查询积分
-- `/tasks` 查看任务
-- `/checkin` 每日签到，奖励10积分
-- `/complete_task` 完成任务并获得积分
-- `/shop` 查看商城商品
-- `/redeem` 使用积分兑换商品并发放 Discord Role
-- `/orders` 查看订单
-- `/invite` 创建邀请链接
-- `/referrals` 查看邀请统计
-- `/admin_add_points` 管理员发积分
-- `/admin_add_task` 管理员创建任务
-- `/admin_add_product` 管理员创建商品
-- `/admin_stats` 管理员查看数据
+Railway 日志中的核心报错：
 
-## 邀请规则
+```text
+asyncpg.exceptions.UndefinedColumnError: column "id" referenced in foreign key constraint does not exist
+```
 
-- 邀请人：+20 Points
-- 新用户：+10 Points
-- 触发条件：新用户通过邀请链接加入服务器后，发送至少一条长度不少于5字符的消息。
+原因是旧版 SQL 里有表引用 `users(id)`，但 Railway 当前数据库中的 `users` 表可能没有 `id` 字段。
 
-## Railway 部署
+本版本已修复：
 
-1. 创建 Railway Worker 服务。
-2. 添加 PostgreSQL 服务。
-3. 在 Worker 环境变量中配置：
+- 不再使用 `users(id)` 外键。
+- 统一以 `discord_id` 作为用户主键/业务关联键。
+- `init.sql` 增加兼容性 ALTER。
+- 避免旧数据库残留结构导致启动失败。
+
+## Railway 环境变量
 
 ```env
 DISCORD_TOKEN=
@@ -38,43 +28,67 @@ DATABASE_URL=
 ENVIRONMENT=production
 ```
 
-4. Start Command:
+## 启动命令
 
 ```bash
 python bot.py
 ```
 
-## Discord Bot 权限
-
-必须打开：
+## Discord Developer Portal 必须开启
 
 - Server Members Intent
 - Message Content Intent
 
-Bot 需要权限：
+## Bot 权限建议
 
-- Use Application Commands
 - Send Messages
-- Read Message History
+- Use Slash Commands
 - Create Invite
-- Manage Roles（商城兑换发Role需要）
+- Manage Roles
+- Read Message History
+- View Channels
 
-Bot 的角色必须高于需要发放的角色。
+## 命令
 
-## 创建商品
+用户：
 
-使用：
+- /ping
+- /profile
+- /points
+- /tasks
+- /checkin
+- /complete_task
+- /shop
+- /redeem
+- /orders
+- /invite
+- /referrals
 
-```text
-/admin_add_product name:VIP Member price:1000 role_id:你的RoleID
+管理员：
+
+- /admin_add_points
+- /admin_add_task
+- /admin_add_product
+- /admin_stats
+
+## 如果仍然启动失败
+
+如果 Railway PostgreSQL 已经有旧的半初始化表，最干净的处理方式是：
+
+1. Railway Postgres 打开 Query
+2. 删除旧表后重新部署
+
+```sql
+DROP TABLE IF EXISTS admin_logs;
+DROP TABLE IF EXISTS referrals;
+DROP TABLE IF EXISTS invite_codes;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS products;
+DROP TABLE IF EXISTS checkins;
+DROP TABLE IF EXISTS user_tasks;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS points;
+DROP TABLE IF EXISTS users;
 ```
 
-## 创建任务
-
-```text
-/admin_add_task name:AMA reward:200 description:Join AMA
-```
-
-## 注意
-
-这是 Lite 版本，目标是先跑通：任务/签到 → 积分 → 商城兑换 → Role权益。后续可以在此基础上继续优化。
+然后重启 Worker。

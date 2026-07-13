@@ -1,33 +1,39 @@
-import discord
-from discord import app_commands
-from modules import users, tasks
+from __future__ import annotations
 
-async def setup(bot):
-    @bot.tree.command(name="tasks", description="View active tasks")
-    async def tasks_cmd(interaction: discord.Interaction):
-        await users.get_or_create_user(interaction.user)
-        rows = await tasks.get_active_tasks()
-        if not rows:
-            await interaction.response.send_message("📋 No active tasks yet.", ephemeral=True)
-            return
-        lines = []
-        for row in rows:
-            lines.append(f"**#{row['id']} {row['name']}** — +{row['reward']} Points\n{row['description'] or ''}")
-        await interaction.response.send_message("📋 **Active Tasks**\n\n" + "\n\n".join(lines), ephemeral=True)
+import discord
+from discord.ext import commands
+from modules.users import ensure_user
+from modules.tasks import list_active_tasks, daily_checkin, complete_task, DAILY_CHECKIN_REWARD
+
+
+async def setup(bot: commands.Bot):
+    @bot.tree.command(name="tasks", description="Show active tasks")
+    async def tasks(interaction: discord.Interaction):
+        await ensure_user(bot.db, interaction.user)
+        rows = await list_active_tasks(bot.db)
+        lines = [f"Daily Check-in - +{DAILY_CHECKIN_REWARD} points. Use /checkin"]
+        if rows:
+            for row in rows:
+                desc = row["description"] or "No description"
+                lines.append(f"#{row['id']} {row['name']} - +{row['reward']} points - {desc}")
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
     @bot.tree.command(name="checkin", description="Daily check-in for points")
-    async def checkin_cmd(interaction: discord.Interaction):
-        user = await users.get_or_create_user(interaction.user)
-        ok, msg, balance = await tasks.checkin(user["id"])
+    async def checkin(interaction: discord.Interaction):
+        await ensure_user(bot.db, interaction.user)
+        ok = await daily_checkin(bot.db, interaction.user.id)
         if ok:
-            await interaction.response.send_message(f"✅ {msg}\nReward: **+10 Points**\nBalance: **{balance}**", ephemeral=True)
+            await interaction.response.send_message(f"Check-in complete. +{DAILY_CHECKIN_REWARD} points.", ephemeral=True)
         else:
-            await interaction.response.send_message(f"⚠️ {msg}\nBalance: **{balance}**", ephemeral=True)
+            await interaction.response.send_message("You already checked in today.", ephemeral=True)
 
     @bot.tree.command(name="complete_task", description="Complete a task by task ID")
-    @app_commands.describe(task_id="Task ID from /tasks")
-    async def complete_task_cmd(interaction: discord.Interaction, task_id: int):
-        user = await users.get_or_create_user(interaction.user)
-        ok, msg, balance = await tasks.complete_task(user["id"], task_id)
-        icon = "✅" if ok else "⚠️"
-        await interaction.response.send_message(f"{icon} {msg}\nBalance: **{balance}**", ephemeral=True)
+    async def complete_task_command(interaction: discord.Interaction, task_id: int):
+        await ensure_user(bot.db, interaction.user)
+        task, status = await complete_task(bot.db, interaction.user.id, task_id)
+        if status == "TASK_NOT_FOUND":
+            await interaction.response.send_message("Task not found or inactive.", ephemeral=True)
+        elif status == "ALREADY_DONE":
+            await interaction.response.send_message("You already completed this task.", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"Task completed: {task['name']}. +{task['reward']} points.", ephemeral=True)

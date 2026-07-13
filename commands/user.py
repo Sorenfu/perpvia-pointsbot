@@ -1,14 +1,23 @@
+from __future__ import annotations
+
 import discord
 from discord import app_commands
-from modules import users, points
+from discord.ext import commands
+from modules.users import ensure_user
+from modules.points import get_balance
 
-async def setup(bot):
-    @bot.tree.command(name="profile", description="View your Community OS profile")
+
+async def setup(bot: commands.Bot):
+    @bot.tree.command(name="ping", description="Check bot status")
+    async def ping(interaction: discord.Interaction):
+        await interaction.response.send_message("Pong. Community OS Lite is online.", ephemeral=True)
+
+    @bot.tree.command(name="profile", description="Show your community profile")
     async def profile(interaction: discord.Interaction):
-        user = await users.get_or_create_user(interaction.user)
-        balance = await points.get_balance(user["id"])
-        embed = discord.Embed(title="👤 Profile", color=0x2B6EF2)
-        embed.add_field(name="Username", value=user["username"] or interaction.user.name, inline=False)
+        user = await ensure_user(bot.db, interaction.user)
+        balance = await get_balance(bot.db, interaction.user.id)
+        embed = discord.Embed(title="Profile", color=0x2B2D31)
+        embed.add_field(name="Username", value=str(user["username"]), inline=False)
         embed.add_field(name="Discord ID", value=str(interaction.user.id), inline=False)
         embed.add_field(name="Points", value=str(balance), inline=False)
         embed.add_field(name="Created", value=str(user["created_at"]), inline=False)

@@ -1,19 +1,22 @@
-from database import db
+from __future__ import annotations
 
-async def get_or_create_user(discord_user):
-    row = await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", discord_user.id)
-    username = getattr(discord_user, "name", str(discord_user))
-    if row:
-        await db.execute("UPDATE users SET username=$1 WHERE discord_id=$2", username, discord_user.id)
-        return await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", discord_user.id)
-    return await db.fetchrow(
-        "INSERT INTO users(discord_id, username) VALUES($1, $2) RETURNING *",
-        discord_user.id,
+import discord
+
+
+async def ensure_user(db, discord_user: discord.abc.User):
+    username = getattr(discord_user, "display_name", None) or getattr(discord_user, "name", str(discord_user.id))
+    await db.execute(
+        '''
+        INSERT INTO users (discord_id, username)
+        VALUES ($1, $2)
+        ON CONFLICT (discord_id)
+        DO UPDATE SET username = EXCLUDED.username
+        ''',
+        int(discord_user.id),
         username,
     )
+    return await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", int(discord_user.id))
 
-async def get_user_by_discord_id(discord_id: int):
-    return await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", discord_id)
 
-async def get_user_by_id(user_id: int):
-    return await db.fetchrow("SELECT * FROM users WHERE id=$1", user_id)
+async def get_user(db, discord_id: int):
+    return await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", int(discord_id))

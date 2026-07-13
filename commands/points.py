@@ -1,9 +1,14 @@
-import discord
-from modules import users, points
+from __future__ import annotations
 
-async def setup(bot):
-    @bot.tree.command(name="points", description="View your points balance")
-    async def points_cmd(interaction: discord.Interaction):
-        user = await users.get_or_create_user(interaction.user)
-        balance = await points.get_balance(user["id"])
-        await interaction.response.send_message(f"💎 Your balance: **{balance} Points**", ephemeral=True)
+import discord
+from discord.ext import commands
+from modules.users import ensure_user
+from modules.points import get_balance
+
+
+async def setup(bot: commands.Bot):
+    @bot.tree.command(name="points", description="Show your points balance")
+    async def points(interaction: discord.Interaction):
+        await ensure_user(bot.db, interaction.user)
+        balance = await get_balance(bot.db, interaction.user.id)
+        await interaction.response.send_message(f"Your points balance: **{balance}**", ephemeral=True)
