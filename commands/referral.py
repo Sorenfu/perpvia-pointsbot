@@ -1,59 +1,57 @@
 from __future__ import annotations
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 from modules.users import ensure_user
-from modules.referral import store_invite, referral_stats, get_latest_invite_code
+from modules.referral import store_invite, referral_stats, INVITER_REWARD, INVITEE_REWARD
+from modules.ui import EMOJI, base_embed, error_embed
 
 
 async def setup(bot: commands.Bot):
-    @bot.tree.command(name="invite", description="Get your personal invite link")
+    @bot.tree.command(name="invite", description="Create your invite link")
+    @app_commands.checks.cooldown(1, 15.0)
     async def invite(interaction: discord.Interaction):
         if interaction.guild is None or interaction.channel is None:
-            await interaction.response.send_message("Use this command inside a server channel.", ephemeral=True)
+            await interaction.response.send_message(
+                embed=error_embed("Server Only", "Use this command inside a server channel."), ephemeral=True
+            )
             return
 
-        await interaction.response.defer(ephemeral=True)
         await ensure_user(bot.db, interaction.user)
 
-        # Reuse the user's existing invite if it's still valid, instead of
-        # minting a brand new one on every /invite call (which used to
-        # clutter the server with dozens of duplicate links per person).
-        invite_obj = None
-        existing_code = await get_latest_invite_code(bot.db, interaction.user.id)
-        if existing_code:
-            try:
-                for inv in await interaction.guild.invites():
-                    if inv.code == existing_code:
-                        invite_obj = inv
-                        break
-            except discord.Forbidden:
-                pass  # Bot lacks Manage Server; fall through and try to create instead.
+        try:
+            invite_obj = await interaction.channel.create_invite(
+                max_age=0,
+                max_uses=0,
+                unique=True,
+                reason=f"Community OS referral invite by {interaction.user.id}",
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=error_embed("Missing Permission", "Bot needs Create Invite permission in this channel."),
+                ephemeral=True,
+            )
+            return
 
-        if invite_obj is None:
-            try:
-                invite_obj = await interaction.channel.create_invite(
-                    max_age=0,
-                    max_uses=0,
-                    unique=True,
-                    reason=f"Community OS referral invite by {interaction.user.id}",
-                )
-            except discord.Forbidden:
-                await interaction.followup.send("Bot needs Create Invite permission in this channel.", ephemeral=True)
-                return
-            await store_invite(bot.db, invite_obj.code, interaction.user.id, invite_obj.uses or 0)
-
+        await store_invite(bot.db, invite_obj.code, interaction.user.id, invite_obj.uses or 0)
         total, rewarded = await referral_stats(bot.db, interaction.user.id)
-        await interaction.followup.send(
-            f"Your invite link: {invite_obj.url}\nSuccessful rewarded invites: {rewarded}\nTotal tracked invites: {total}",
-            ephemeral=True,
-        )
+
+        embed = base_embed(f"{EMOJI['invite']} Your Invite Link")
+        embed.add_field(name="Link", value=invite_obj.url, inline=False)
+        embed.add_field(name="Rewarded Invites", value=str(rewarded), inline=True)
+        embed.add_field(name="Total Tracked", value=str(total), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="referrals", description="Show your referral stats")
     async def referrals(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         total, rewarded = await referral_stats(bot.db, interaction.user.id)
-        await interaction.followup.send(
-            f"Referral stats:\nTotal tracked: {total}\nRewarded: {rewarded}\nReward rule: inviter +20, newcomer +10 after first valid message.",
-            ephemeral=True,
+        embed = base_embed(f"{EMOJI['invite']} Referral Stats")
+        embed.add_field(name="Total Tracked", value=str(total), inline=True)
+        embed.add_field(name="Rewarded", value=str(rewarded), inline=True)
+        embed.add_field(
+            name="Reward Rule",
+            value=f"Inviter +{INVITER_REWARD} {EMOJI['points']} • Newcomer +{INVITEE_REWARD} {EMOJI['points']} after first valid message.",
+            inline=False,
         )
+        await interaction.response.send_message(embed=embed, ephemeral=True)

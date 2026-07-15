@@ -20,8 +20,3 @@ async def ensure_user(db, discord_user: discord.abc.User):
 
 async def get_user(db, discord_id: int):
     return await db.fetchrow("SELECT * FROM users WHERE discord_id=$1", int(discord_id))
-
-
-async def get_all_user_ids(db) -> set[int]:
-    rows = await db.fetch("SELECT discord_id FROM users")
-    return {int(r["discord_id"]) for r in rows}

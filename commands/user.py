@@ -1,25 +1,27 @@
 from __future__ import annotations
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 from modules.users import ensure_user
 from modules.points import get_balance
+from modules.ui import EMOJI, base_embed
 
 
 async def setup(bot: commands.Bot):
     @bot.tree.command(name="ping", description="Check bot status")
     async def ping(interaction: discord.Interaction):
-        await interaction.response.send_message("Pong. Community OS Lite is online.", ephemeral=True)
+        latency_ms = round(bot.latency * 1000)
+        embed = base_embed("Pong!", f"Community OS Lite is online.\nLatency: `{latency_ms}ms`")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="profile", description="Show your community profile")
     async def profile(interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
         user = await ensure_user(bot.db, interaction.user)
         balance = await get_balance(bot.db, interaction.user.id)
-        embed = discord.Embed(title="Profile", color=0x2B2D31)
-        embed.add_field(name="Username", value=str(user["username"]), inline=False)
-        embed.add_field(name="Discord ID", value=str(interaction.user.id), inline=False)
-        embed.add_field(name="Points", value=str(balance), inline=False)
-        embed.add_field(name="Created", value=str(user["created_at"]), inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        embed = base_embed(f"{EMOJI['profile']} Profile")
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.add_field(name="Username", value=str(user["username"]), inline=True)
+        embed.add_field(name="Discord ID", value=str(interaction.user.id), inline=True)
+        embed.add_field(name=f"{EMOJI['points']} Points", value=str(balance), inline=True)
+        embed.add_field(name="Member Since", value=str(user["created_at"]), inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)

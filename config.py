@@ -5,8 +5,17 @@ load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-_owner_id_raw = os.getenv("OWNER_ID", "").strip()
+OWNER_ID = int(os.getenv("OWNER_ID", "0") or "0")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
+ERROR_WEBHOOK_URL = os.getenv("ERROR_WEBHOOK_URL", "").strip()
+
+# NFT holder verification (optional). Leave empty to keep the feature disabled/hidden.
+NFT_CONTRACT_ADDRESS = os.getenv("NFT_CONTRACT_ADDRESS", "").strip()
+NFT_RPC_URL = os.getenv("NFT_RPC_URL", "").strip()
+NFT_HOLDER_ROLE_ID = int(os.getenv("NFT_HOLDER_ROLE_ID", "0") or "0")
+
+# Advanced task review queue (optional). Leave empty to keep /submit_task hidden/disabled.
+TASK_REVIEW_CHANNEL_ID = int(os.getenv("TASK_REVIEW_CHANNEL_ID", "0") or "0")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("Missing DISCORD_TOKEN environment variable")
@@ -14,19 +23,5 @@ if not DISCORD_TOKEN:
 if not DATABASE_URL:
     raise RuntimeError("Missing DATABASE_URL environment variable")
 
-if not _owner_id_raw:
-    raise RuntimeError(
-        "Missing OWNER_ID environment variable. Set it in Railway -> Variables "
-        "to your own Discord user ID (right-click your name in Discord with "
-        "Developer Mode on -> Copy User ID)."
-    )
-
-try:
-    OWNER_ID = int(_owner_id_raw)
-except ValueError:
-    raise RuntimeError(
-        f"OWNER_ID must be a numeric Discord user ID, got: {_owner_id_raw!r}"
-    ) from None
-
 if OWNER_ID == 0:
-    raise RuntimeError("OWNER_ID cannot be 0. Set it to your own Discord user ID.")
+    raise RuntimeError("Missing OWNER_ID environment variable")

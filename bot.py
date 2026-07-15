@@ -8,13 +8,11 @@ from discord.ext import commands
 
 from config import DISCORD_TOKEN, DATABASE_URL
 from database import Database
-from modules.users import ensure_user, get_all_user_ids
-from modules.referral import (
-    refresh_guild_invites,
-    handle_member_join,
-    process_message_for_referral,
-    get_pending_referral_invitee_ids,
-)
+from modules.activity import award_message_points
+from modules.alerts import send_alert
+from modules.ui import error_embed
+from modules.users import ensure_user
+from modules.referral import refresh_guild_invites, handle_member_join, process_message_for_referral
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
 log = logging.getLogger("community-os")
@@ -25,6 +23,8 @@ COMMAND_MODULES = [
     "commands.tasks",
     "commands.shop",
     "commands.referral",
+    "commands.leaderboard",
+    "commands.wallet",
     "commands.admin",
 ]
 
@@ -38,50 +38,49 @@ class CommunityOSBot(commands.Bot):
         self.db = Database(DATABASE_URL)
         self.invite_cache: dict[int, dict[str, int]] = {}
         self.synced_once = False
-        # In-memory caches to avoid a DB round trip on every single message.
-        # known_user_ids: users we've already upserted, so we don't re-write
-        # a row on every message from the same person.
-        # pending_referral_ids: invitees still owed their "first message"
-        # reward, so we only bother checking referrals for people who are
-        # actually eligible instead of querying on every message from anyone.
-        self.known_user_ids: set[int] = set()
-        self.pending_referral_ids: set[int] = set()
+        self.tree.on_error = self.on_app_command_error
 
     async def setup_hook(self) -> None:
         for module in COMMAND_MODULES:
             await self.load_extension(module)
 
-        @self.tree.error
-        async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-            log.exception("Slash command error in /%s", getattr(interaction.command, "name", "?"), exc_info=error)
-            message = "Something went wrong running that command. Please try again in a moment."
-            try:
-                if interaction.response.is_done():
-                    await interaction.followup.send(message, ephemeral=True)
-                else:
-                    await interaction.response.send_message(message, ephemeral=True)
-            except discord.HTTPException:
-                pass
+    async def on_app_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ) -> None:
+        original = getattr(error, "original", error)
+        command_name = interaction.command.name if interaction.command else "unknown"
+
+        if isinstance(original, discord.Forbidden):
+            message = "Bot is missing permissions to complete this action."
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            message = f"This command is on cooldown. Try again in {error.retry_after:.1f}s."
+        elif isinstance(error, (app_commands.MissingPermissions, app_commands.CheckFailure)):
+            message = "You don't have permission to use this command."
+        else:
+            message = "Something went wrong while running this command. The team has been notified."
+            log.exception("Unhandled app command error in /%s", command_name, exc_info=original)
+            asyncio.create_task(
+                send_alert(self, f"/{command_name} failed", f"{type(original).__name__}: {original}")
+            )
+
+        embed = error_embed("Command Error", message)
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     async def on_ready(self):
         if not self.synced_once:
             try:
                 synced = await self.tree.sync()
                 log.info("Synced %s slash commands", len(synced))
-            except Exception:
+            except Exception as exc:
                 log.exception("Slash command sync failed")
+                await send_alert(self, "Slash command sync failed", f"{type(exc).__name__}: {exc}")
             self.synced_once = True
-
-            try:
-                self.known_user_ids = await get_all_user_ids(self.db)
-                self.pending_referral_ids = await get_pending_referral_invitee_ids(self.db)
-                log.info(
-                    "Loaded caches: %s known users, %s pending referrals",
-                    len(self.known_user_ids),
-                    len(self.pending_referral_ids),
-                )
-            except Exception:
-                log.exception("Failed to warm up in-memory caches")
 
         for guild in self.guilds:
             await refresh_guild_invites(self, guild)
@@ -89,22 +88,25 @@ class CommunityOSBot(commands.Bot):
         log.info("Bot online as %s", self.user)
 
     async def on_member_join(self, member: discord.Member):
-        await ensure_user(self.db, member)
-        self.known_user_ids.add(member.id)
-        await handle_member_join(self, member)
+        try:
+            await ensure_user(self.db, member)
+            await handle_member_join(self, member)
+        except Exception as exc:
+            log.exception("Error handling member join for %s", member.id)
+            await send_alert(self, "on_member_join failed", f"{type(exc).__name__}: {exc}")
 
     async def on_message(self, message: discord.Message):
         if message.author.bot:
             return
-        if message.guild is not None:
-            author_id = message.author.id
-            if author_id not in self.known_user_ids:
+        try:
+            if message.guild is not None:
                 await ensure_user(self.db, message.author)
-                self.known_user_ids.add(author_id)
-            if author_id in self.pending_referral_ids:
-                rewarded = await process_message_for_referral(self.db, author_id)
-                if rewarded:
-                    self.pending_referral_ids.discard(author_id)
+                await process_message_for_referral(self.db, message.author.id)
+                if not message.content.startswith(self.command_prefix):
+                    await award_message_points(self.db, message.author.id)
+        except Exception as exc:
+            log.exception("Error processing message from %s", message.author.id)
+            await send_alert(self, "on_message failed", f"{type(exc).__name__}: {exc}")
         await self.process_commands(message)
 
 

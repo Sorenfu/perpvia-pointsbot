@@ -31,18 +31,6 @@ async def store_invite(db, code: str, inviter_discord_id: int, uses: int = 0):
     )
 
 
-async def get_latest_invite_code(db, inviter_discord_id: int) -> str | None:
-    """Return the most recently created invite code we've stored for this
-    user, if any. Used so /invite reuses one link per person instead of
-    minting a new one every time (which would otherwise pile up invites in
-    the server, up to Discord's per-guild cap)."""
-    row = await db.fetchrow(
-        "SELECT code FROM invite_codes WHERE inviter_discord_id=$1 ORDER BY created_at DESC LIMIT 1",
-        int(inviter_discord_id),
-    )
-    return row["code"] if row else None
-
-
 async def handle_member_join(bot, member: discord.Member):
     guild = member.guild
     before = bot.invite_cache.get(guild.id, {})
@@ -71,20 +59,17 @@ async def handle_member_join(bot, member: discord.Member):
     if inviter_id == invitee_id:
         return
 
-    inserted = await bot.db.fetchrow(
+    await bot.db.execute(
         '''
         INSERT INTO referrals (inviter_discord_id, invitee_discord_id, invite_code)
         VALUES ($1, $2, $3)
         ON CONFLICT (invitee_discord_id)
         DO NOTHING
-        RETURNING id
         ''',
         inviter_id,
         invitee_id,
         used_code,
     )
-    if inserted is not None and hasattr(bot, "pending_referral_ids"):
-        bot.pending_referral_ids.add(invitee_id)
 
 
 async def process_message_for_referral(db, invitee_discord_id: int):
@@ -113,13 +98,6 @@ async def process_message_for_referral(db, invitee_discord_id: int):
         int(referral["id"]),
     )
     return True
-
-
-async def get_pending_referral_invitee_ids(db) -> set[int]:
-    """Invitees who still owe a first-message reward. Used to build an
-    in-memory fast-path so we don't hit the DB on every single message."""
-    rows = await db.fetch("SELECT invitee_discord_id FROM referrals WHERE rewarded=false")
-    return {int(r["invitee_discord_id"]) for r in rows}
 
 
 async def referral_stats(db, discord_id: int):
