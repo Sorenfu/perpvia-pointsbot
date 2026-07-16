@@ -31,7 +31,7 @@ CATEGORY_CHOICES = [
 
 
 def admin_only(interaction: discord.Interaction) -> bool:
-    return is_admin(interaction.user.id)
+    return is_admin(interaction.user)
 
 
 def stock_text(stock: int | None) -> str:
@@ -211,11 +211,12 @@ async def setup(bot: commands.Bot):
         for page_num, chunk in enumerate(chunks, start=1):
             embed = info_embed(f"{EMOJI['task']} Pending Submissions")
             for s in chunk:
-                proof = s["proof"] or "No proof text provided."
+                proof = s["proof"] or ("Screenshot only, see link below." if s["proof_image_url"] else "No proof provided.")
+                screenshot_line = f"\n[View screenshot]({s['proof_image_url']})" if s["proof_image_url"] else ""
                 embed.add_field(
                     name=f"#{s['id']} · {s['task_name']} (+{s['task_reward']} {EMOJI['points']})",
                     value=(
-                        f"By: <@{s['discord_id']}>\nProof: {proof}\nSubmitted: {s['created_at']}\n"
+                        f"By: <@{s['discord_id']}>\nProof: {proof}{screenshot_line}\nSubmitted: {s['created_at']}\n"
                         f"Use `/admin_grant_task task_id:{s['task_id']} member:<user>` to approve manually, "
                         f"or review it in the submissions channel."
                     ),

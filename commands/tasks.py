@@ -51,7 +51,7 @@ def task_field(row) -> tuple[str, str]:
     if row["category"] == CATEGORY_BASIC:
         how_to = f"Use `/complete_task task_id:{row['id']}`"
     elif is_review_enabled():
-        how_to = f"Use `/submit_task task_id:{row['id']} proof:<link/description>` for admin review"
+        how_to = f"Use `/submit_task task_id:{row['id']}` with a link/description and/or a screenshot for admin review"
     else:
         how_to = "Complete it, then contact an admin for review — not self-claimable."
     name = f"#{row['id']} · {row['name']} · {category_label(row['category'])}"
@@ -64,8 +64,11 @@ def build_review_embed(submission, task_name: str, task_reward: int) -> discord.
     embed.add_field(name="Task", value=f"#{submission['task_id']} · {task_name}", inline=True)
     embed.add_field(name=f"{EMOJI['points']} Base Reward", value=f"+{task_reward}", inline=True)
     embed.add_field(name="Submitted By", value=f"<@{submission['discord_id']}>", inline=True)
-    embed.add_field(name="Proof", value=submission["proof"] or "No proof text provided.", inline=False)
+    proof_text = submission["proof"] or ("Screenshot attached below." if submission["proof_image_url"] else "No proof provided.")
+    embed.add_field(name="Proof", value=proof_text, inline=False)
     embed.add_field(name="Submitted At", value=str(submission["created_at"]), inline=False)
+    if submission["proof_image_url"]:
+        embed.set_image(url=submission["proof_image_url"])
     return embed
 
 
@@ -151,7 +154,7 @@ class ApproveSubmissionButton(
         return cls(int(match["submission_id"]))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        if not is_admin(interaction.user.id):
+        if not is_admin(interaction.user):
             await interaction.response.send_message(
                 embed=error_embed("No Permission", "You are not authorized to review submissions."), ephemeral=True
             )
@@ -188,7 +191,7 @@ class RejectSubmissionButton(
         return cls(int(match["submission_id"]))
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        if not is_admin(interaction.user.id):
+        if not is_admin(interaction.user):
             await interaction.response.send_message(
                 embed=error_embed("No Permission", "You are not authorized to review submissions."), ephemeral=True
             )
@@ -297,7 +300,7 @@ async def setup(bot: commands.Bot):
             )
         elif status == "NOT_SELF_SERVE":
             if is_review_enabled():
-                hint = f"Use `/submit_task task_id:{task_id} proof:<link/description>` to send it for admin review."
+                hint = f"Use `/submit_task task_id:{task_id}` with a link/description and/or a screenshot to send it for admin review."
             else:
                 hint = "Complete it and contact an admin for review."
             await interaction.response.send_message(
@@ -332,10 +335,29 @@ async def setup(bot: commands.Bot):
     # The command is only registered when that configuration is present, so it stays hidden until enabled.
     if is_review_enabled():
         @bot.tree.command(name="submit_task", description="Submit proof for an advanced task for admin review")
+        @app_commands.describe(
+            proof="A link or description of your proof (optional if attaching a screenshot)",
+            screenshot="A screenshot/image as proof (optional if providing a link/description)",
+        )
         @app_commands.checks.cooldown(1, 15.0)
-        async def submit_task(interaction: discord.Interaction, task_id: int, proof: str):
+        async def submit_task(
+            interaction: discord.Interaction,
+            task_id: int,
+            proof: str = "",
+            screenshot: discord.Attachment | None = None,
+        ):
+            if not proof.strip() and screenshot is None:
+                await interaction.response.send_message(
+                    embed=error_embed("Proof Required", "Provide a link/description, attach a screenshot, or both."),
+                    ephemeral=True,
+                )
+                return
+
             await ensure_user(bot.db, interaction.user)
-            task, submission, status = await create_submission(bot.db, interaction.user.id, task_id, proof)
+            image_url = screenshot.url if screenshot else None
+            task, submission, status = await create_submission(
+                bot.db, interaction.user.id, task_id, proof.strip() or None, image_url
+            )
 
             if status == "TASK_NOT_FOUND":
                 await interaction.response.send_message(

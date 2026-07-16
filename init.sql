@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS task_submissions (
     discord_id BIGINT NOT NULL,
     task_id INTEGER NOT NULL,
     proof TEXT,
+    proof_image_url TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING',
     reviewed_by BIGINT,
     review_note TEXT,
@@ -132,6 +133,7 @@ CREATE TABLE IF NOT EXISTS task_submissions (
 );
 
 ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS awarded_points INTEGER;
+ALTER TABLE task_submissions ADD COLUMN IF NOT EXISTS proof_image_url TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_task_submissions_discord_id ON task_submissions(discord_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_submissions_pending ON task_submissions(discord_id, task_id) WHERE status='PENDING';

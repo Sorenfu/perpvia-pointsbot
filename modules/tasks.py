@@ -245,8 +245,11 @@ def is_review_enabled() -> bool:
     return bool(TASK_REVIEW_CHANNEL_ID)
 
 
-async def create_submission(db, discord_id: int, task_id: int, proof: str | None):
-    """User-side submission for an ADVANCED task, queued for admin review."""
+async def create_submission(db, discord_id: int, task_id: int, proof: str | None, proof_image_url: str | None = None):
+    """User-side submission for an ADVANCED task, queued for admin review.
+
+    Proof can be a text/link description, a screenshot (proof_image_url), or both.
+    """
     task = await db.fetchrow("SELECT * FROM tasks WHERE id=$1 AND status='ACTIVE'", int(task_id))
     if not task:
         return task, None, "TASK_NOT_FOUND"
@@ -269,13 +272,14 @@ async def create_submission(db, discord_id: int, task_id: int, proof: str | None
     try:
         submission = await db.fetchrow(
             '''
-            INSERT INTO task_submissions (discord_id, task_id, proof)
-            VALUES ($1, $2, $3)
+            INSERT INTO task_submissions (discord_id, task_id, proof, proof_image_url)
+            VALUES ($1, $2, $3, $4)
             RETURNING *
             ''',
             int(discord_id),
             int(task_id),
             proof,
+            proof_image_url,
         )
     except asyncpg.UniqueViolationError:
         return task, None, "ALREADY_PENDING"
