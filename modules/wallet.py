@@ -65,10 +65,10 @@ async def confirm_binding(db, discord_id: int, signature: str) -> tuple[bool, st
     try:
         await db.execute(
             '''
-            INSERT INTO wallet_bindings (discord_id, wallet_address, verified_at)
-            VALUES ($1, $2, NOW())
+            INSERT INTO wallet_bindings (discord_id, wallet_address, verified, verified_at)
+            VALUES ($1, $2, TRUE, NOW())
             ON CONFLICT (discord_id)
-            DO UPDATE SET wallet_address=EXCLUDED.wallet_address, verified_at=NOW()
+            DO UPDATE SET wallet_address=EXCLUDED.wallet_address, verified=TRUE, verified_at=NOW()
             ''',
             int(discord_id),
             row["wallet_address"],
@@ -88,3 +88,34 @@ async def get_wallet(db, discord_id: int):
 async def unbind_wallet(db, discord_id: int) -> bool:
     result = await db.execute("DELETE FROM wallet_bindings WHERE discord_id=$1", int(discord_id))
     return result.split(" ")[-1] != "0"
+
+
+async def submit_unverified_wallet(db, discord_id: int, address: str) -> tuple[bool, str]:
+    """Lightweight, unsigned wallet capture used during redemption of wallet-required products.
+
+    Only inserts if the user has no wallet on file yet (verified or not) — never
+    overwrites an existing record, so this can't accidentally downgrade a
+    signature-verified binding.
+    """
+    address = address.strip()
+    if not is_valid_address(address):
+        return False, "That doesn't look like a valid EVM address (expected 0x followed by 40 hex characters)."
+
+    try:
+        row = await db.fetchrow(
+            '''
+            INSERT INTO wallet_bindings (discord_id, wallet_address, verified, verified_at)
+            VALUES ($1, $2, FALSE, NOW())
+            ON CONFLICT (discord_id) DO NOTHING
+            RETURNING wallet_address
+            ''',
+            int(discord_id),
+            address.lower(),
+        )
+    except asyncpg.UniqueViolationError:
+        return False, "This wallet is already on file for another Discord account."
+
+    if not row:
+        return False, "You already have a wallet on file."
+
+    return True, address.lower()

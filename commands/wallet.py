@@ -58,7 +58,12 @@ async def setup(bot: commands.Bot):
             return
         embed = base_embed(f"{EMOJI['profile']} Wallet Status")
         embed.add_field(name="Address", value=f"`{row['wallet_address']}`", inline=False)
-        embed.add_field(name="Verified At", value=str(row["verified_at"]), inline=False)
+        embed.add_field(
+            name="Verification",
+            value="✅ Signature-verified" if row["verified"] else "⚠️ Self-reported (not signature-verified)",
+            inline=False,
+        )
+        embed.add_field(name="On File Since", value=str(row["verified_at"]), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.tree.command(name="wallet_unbind", description="Remove your bound wallet")
@@ -89,6 +94,17 @@ async def setup(bot: commands.Bot):
             if not row:
                 await interaction.response.send_message(
                     embed=error_embed("No Wallet Bound", "Use `/wallet_bind` first."), ephemeral=True
+                )
+                return
+
+            if not row["verified"]:
+                await interaction.response.send_message(
+                    embed=error_embed(
+                        "Wallet Not Verified",
+                        "The wallet on file was self-reported, not signature-verified. "
+                        "Run `/wallet_bind` and `/wallet_confirm` to verify ownership before checking holdings.",
+                    ),
+                    ephemeral=True,
                 )
                 return
 

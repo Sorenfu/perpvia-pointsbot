@@ -22,6 +22,7 @@
 - 任务系统升级，区分「基础任务」与「进阶任务」，并支持限时任务，详见下方「任务系统」一节。
 - 新增进阶任务审核队列：配置 `TASK_REVIEW_CHANNEL_ID` 后，用户可用 `/submit_task` 提交凭证，机器人自动把提交信息发到指定频道，附「批准/驳回」按钮，管理员点按钮即可审核并自动发放/拒绝，同时私信通知用户结果。留空则该命令隐藏，行为回退成"手动联系管理员"。详见下方「任务系统」一节。
 - 审核通过时支持按表现打分：批准按钮会弹出输入框，预填任务基础积分，可改成更高/更低的数值（如基础 50、优秀内容给 500）；`/admin_grant_task` 也加了同样的可选 `amount` 参数。实际发放数额独立记录，`/admin_revoke_grant` 撤销时精确扣回当时发的数额，不受任务基础积分后续变动影响。
+- 新增商品「需要钱包地址」开关（`requires_wallet`）与兑换通知：勾选后，用户兑换该商品时若还没有钱包记录，会弹出文本框直接提交 EVM 地址（无需签名，纯自报，适合白名单名额这类场景）；不管商品是否需要钱包，兑换成功后都会私信通知 `OWNER_ID`（商品、兑换人、消耗积分，需要钱包的商品会带上地址与验证状态）。为区分可信度，钱包记录新增"是否签名验证过"标记，`/wallet_holdings`（NFT 持有检测）只信任签名验证过的地址，不采信兑换时自报的地址。详见下方「商城钱包要求」一节。
 
 ## 本次修复
 
@@ -65,6 +66,18 @@ NFT_HOLDER_ROLE_ID=
 - `NFT_CONTRACT_ADDRESS`：Base 链（或其他 EVM 链）上的 NFT 合约地址（`0x...`）。
 - `NFT_RPC_URL`：一个可用的 EVM JSON-RPC 节点地址（例如 Base 官方公共节点、或 Alchemy/Infura 等付费节点的 URL）。免费公共节点可先用于测试，正式上线建议换成有 SLA 保障的付费节点，只需替换这一个环境变量，不用改代码。
 - `NFT_HOLDER_ROLE_ID`：持有者身份组的 Discord Role ID，可选；不填则只查询持有数量、不自动发放身份组。
+
+## 商城钱包要求 与 兑换通知
+
+商品可以单独勾选「需要钱包地址」（`requires_wallet`），不勾选的商品行为不变。这个跟上面的 NFT 持有验证是两套独立机制：
+
+- **不需要签名验证**：这里要的只是"知道该发给哪个地址"，不是"证明这个地址真的是他的"，所以走的是比 `/wallet_bind` 更轻的路径——兑换时如果用户还没有任何钱包记录，点击「确认兑换」后会直接弹出一个文本框，输入 EVM 地址（校验格式，不需要签名），提交后立刻完成兑换。
+- 如果用户之前已经用 `/wallet_bind` 完整验证过，或者兑换别的商品时报过地址，会直接复用已有记录，不会重复问。
+- 钱包记录会标注是「✅ 签名验证过」还是「⚠️ 自报未验证」，`/wallet_status` 和管理员收到的通知里都会显示这个标记。
+- **`/wallet_holdings`（NFT 持有检测、发身份组）只认签名验证过的地址**，自报的地址不会被采信去做那个更高权重的判断——避免有人随便填一个不属于自己的地址就骗到持有者身份组。
+- 不管商品是否需要钱包，**每次兑换成功都会私信通知 `OWNER_ID`**：商品名称、兑换人、消耗积分；需要钱包的商品会额外带上地址和验证状态。管理员私信关闭时通知会静默失败，不影响兑换本身。
+- 创建/编辑商品时加 `requires_wallet:true` 即可开启，例如：
+  `/admin_add_product name:Via Genesis Core price:1000 description:... stock:100 requires_wallet:true`
 
 ## 任务系统
 
@@ -135,7 +148,7 @@ python bot.py
 - /complete_task
 - /submit_task（仅在配置 `TASK_REVIEW_CHANNEL_ID` 后可用，为进阶任务提交凭证等待审核）
 - /shop
-- /redeem
+- /redeem（若商品要求钱包地址且用户还没提交过，确认后会弹窗要求输入 EVM 地址）
 - /orders
 - /invite
 - /referrals
@@ -156,7 +169,7 @@ python bot.py
 - /admin_pending_tasks（列出所有待审核的进阶任务提交，兜底用，正常审核走 `TASK_REVIEW_CHANNEL_ID` 频道里的按钮）
 - /admin_remove_task
 - /admin_list_tasks（列出全部任务，含已下架，分页展示，含任务类型与时间窗口）
-- /admin_add_product（可选 stock 参数，留空为不限量）
+- /admin_add_product（可选 stock 参数，留空为不限量；可选 requires_wallet，勾选后兑换需提交 EVM 地址）
 - /admin_edit_product
 - /admin_remove_product
 - /admin_list_products（列出全部商品，含已下架，分页展示）

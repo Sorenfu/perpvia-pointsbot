@@ -23,14 +23,20 @@ async def create_product(
     role_id: int | None = None,
     description: str | None = None,
     stock: int | None = None,
+    requires_wallet: bool = False,
 ):
     return await db.fetchrow(
-        "INSERT INTO products (name, price, role_id, description, stock) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+        '''
+        INSERT INTO products (name, price, role_id, description, stock, requires_wallet)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+        ''',
         name,
         int(price),
         int(role_id) if role_id else None,
         description,
         int(stock) if stock is not None else None,
+        bool(requires_wallet),
     )
 
 
@@ -42,11 +48,12 @@ async def edit_product(
     role_id: int | None = None,
     description: str | None = None,
     stock: int | None = None,
+    requires_wallet: bool = False,
 ):
     return await db.fetchrow(
         '''
         UPDATE products
-        SET name=$2, price=$3, role_id=$4, description=$5, stock=$6
+        SET name=$2, price=$3, role_id=$4, description=$5, stock=$6, requires_wallet=$7
         WHERE id=$1 AND status='ACTIVE'
         RETURNING *
         ''',
@@ -56,6 +63,7 @@ async def edit_product(
         int(role_id) if role_id else None,
         description,
         int(stock) if stock is not None else None,
+        bool(requires_wallet),
     )
 
 

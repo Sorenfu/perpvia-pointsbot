@@ -64,11 +64,13 @@ CREATE TABLE IF NOT EXISTS products (
     price INTEGER NOT NULL,
     role_id BIGINT,
     stock INTEGER,
+    requires_wallet BOOLEAN NOT NULL DEFAULT FALSE,
     status TEXT DEFAULT 'ACTIVE',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS stock INTEGER;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS requires_wallet BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS orders (
     id SERIAL PRIMARY KEY,
@@ -137,8 +139,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_task_submissions_pending ON task_submissio
 CREATE TABLE IF NOT EXISTS wallet_bindings (
     discord_id BIGINT PRIMARY KEY,
     wallet_address TEXT NOT NULL,
+    verified BOOLEAN NOT NULL DEFAULT TRUE,
     verified_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_bindings_address ON wallet_bindings(wallet_address);
 

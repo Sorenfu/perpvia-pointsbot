@@ -270,6 +270,7 @@ async def setup(bot: commands.Bot):
         await send_paginated(interaction, pages)
 
     @bot.tree.command(name="admin_add_product", description="Admin: create a shop product")
+    @app_commands.describe(requires_wallet="If true, redeemers must have (or submit) an EVM wallet address")
     async def admin_add_product(
         interaction: discord.Interaction,
         name: str,
@@ -277,21 +278,24 @@ async def setup(bot: commands.Bot):
         role: discord.Role | None = None,
         description: str = "",
         stock: int | None = None,
+        requires_wallet: bool = False,
     ):
         if not admin_only(interaction):
             await deny(interaction)
             return
-        product = await create_product(bot.db, name, price, role.id if role else None, description, stock)
+        product = await create_product(bot.db, name, price, role.id if role else None, description, stock, requires_wallet)
         await log_admin(bot.db, interaction.user.id, "ADMIN_ADD_PRODUCT", f"{product['id']} {name} {price}")
         await interaction.response.send_message(
             embed=success_embed(
                 "Product Created",
-                f"{EMOJI['shop']} #{product['id']} **{name}** - {price} {EMOJI['points']}\nStock: {stock_text(stock)}",
+                f"{EMOJI['shop']} #{product['id']} **{name}** - {price} {EMOJI['points']}\n"
+                f"Stock: {stock_text(stock)} • Requires wallet: {'Yes' if requires_wallet else 'No'}",
             ),
             ephemeral=True,
         )
 
     @bot.tree.command(name="admin_edit_product", description="Admin: edit an existing shop product")
+    @app_commands.describe(requires_wallet="If true, redeemers must have (or submit) an EVM wallet address")
     async def admin_edit_product(
         interaction: discord.Interaction,
         product_id: int,
@@ -300,11 +304,12 @@ async def setup(bot: commands.Bot):
         role: discord.Role | None = None,
         description: str = "",
         stock: int | None = None,
+        requires_wallet: bool = False,
     ):
         if not admin_only(interaction):
             await deny(interaction)
             return
-        product = await edit_product(bot.db, product_id, name, price, role.id if role else None, description, stock)
+        product = await edit_product(bot.db, product_id, name, price, role.id if role else None, description, stock, requires_wallet)
         if not product:
             await interaction.response.send_message(
                 embed=error_embed("Product Not Found", f"No active product with ID #{product_id}."), ephemeral=True
@@ -314,7 +319,8 @@ async def setup(bot: commands.Bot):
         await interaction.response.send_message(
             embed=success_embed(
                 "Product Updated",
-                f"{EMOJI['shop']} #{product['id']} **{name}** - {price} {EMOJI['points']}\nStock: {stock_text(stock)}",
+                f"{EMOJI['shop']} #{product['id']} **{name}** - {price} {EMOJI['points']}\n"
+                f"Stock: {stock_text(stock)} • Requires wallet: {'Yes' if requires_wallet else 'No'}",
             ),
             ephemeral=True,
         )
@@ -355,9 +361,10 @@ async def setup(bot: commands.Bot):
             for p in chunk:
                 desc = p["description"] or "No description"
                 role_text = f"Role: <@&{p['role_id']}>" if p["role_id"] else "No role"
+                wallet_text = " • 🔑 Requires wallet" if p["requires_wallet"] else ""
                 embed.add_field(
                     name=f"#{p['id']} · {p['name']} · {status_text(p['status'])} — {p['price']} {EMOJI['points']}",
-                    value=f"{desc}\n{role_text} • Stock: {stock_text(p['stock'])}",
+                    value=f"{desc}\n{role_text} • Stock: {stock_text(p['stock'])}{wallet_text}",
                     inline=False,
                 )
             paginate_footer(embed, page_num, len(chunks))

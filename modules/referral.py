@@ -3,7 +3,7 @@ from __future__ import annotations
 import discord
 from modules.points import add_points
 
-INVITER_REWARD = 20
+INVITER_REWARD = 50
 INVITEE_REWARD = 10
 
 
