@@ -22,6 +22,7 @@ from modules.tasks import (
     CATEGORY_ADVANCED,
     category_label,
     task_window_text,
+    reward_text,
 )
 from modules.activity import (
     get_today_progress,
@@ -55,14 +56,14 @@ def task_field(row) -> tuple[str, str]:
     else:
         how_to = "Complete it, then contact an admin for review — not self-claimable."
     name = f"#{row['id']} · {row['name']} · {category_label(row['category'])}"
-    value = f"+{row['reward']} {EMOJI['points']} points\n{desc}\n{window}\n{how_to}"
+    value = f"{reward_text(row['reward'], row['reward_max'])} {EMOJI['points']} points\n{desc}\n{window}\n{how_to}"
     return name, value
 
 
-def build_review_embed(submission, task_name: str, task_reward: int) -> discord.Embed:
+def build_review_embed(submission, task_name: str, task_reward: int, task_reward_max: int | None = None) -> discord.Embed:
     embed = base_embed(f"⭐ Task Submission #{submission['id']}", color=COLOR_WARNING)
     embed.add_field(name="Task", value=f"#{submission['task_id']} · {task_name}", inline=True)
-    embed.add_field(name=f"{EMOJI['points']} Base Reward", value=f"+{task_reward}", inline=True)
+    embed.add_field(name=f"{EMOJI['points']} Reward", value=reward_text(task_reward, task_reward_max), inline=True)
     embed.add_field(name="Submitted By", value=f"<@{submission['discord_id']}>", inline=True)
     proof_text = submission["proof"] or ("Screenshot attached below." if submission["proof_image_url"] else "No proof provided.")
     embed.add_field(name="Proof", value=proof_text, inline=False)
@@ -81,13 +82,17 @@ async def notify_member(bot: commands.Bot, discord_id: int, embed: discord.Embed
 
 
 class ApprovalAmountModal(discord.ui.Modal, title="Approve & Score Submission"):
-    def __init__(self, submission_id: int, default_amount: int):
+    def __init__(self, submission_id: int, default_amount: int, max_amount: int | None = None):
         super().__init__()
         self.submission_id = submission_id
+        if max_amount is not None and max_amount > default_amount:
+            placeholder = f"Suggested range: {default_amount}-{max_amount} — pick a value based on quality"
+        else:
+            placeholder = f"Base reward is {default_amount} — raise it for a strong submission"
         self.amount_input = discord.ui.TextInput(
             label="Points to award",
             default=str(default_amount),
-            placeholder=f"Base reward is {default_amount} — raise it for a strong submission",
+            placeholder=placeholder,
             required=True,
             max_length=10,
         )
@@ -117,7 +122,7 @@ class ApprovalAmountModal(discord.ui.Modal, title="Approve & Score Submission"):
             )
             return
 
-        embed = build_review_embed(result, result["task_name"], result["task_reward"])
+        embed = build_review_embed(result, result["task_name"], result["task_reward"], result["task_reward_max"])
         embed.color = COLOR_SUCCESS
         embed.add_field(
             name="Result", value=f"✅ Approved by <@{interaction.user.id}> — awarded **{amount}** {EMOJI['points']}", inline=False
@@ -169,7 +174,9 @@ class ApproveSubmissionButton(
             )
             return
 
-        await interaction.response.send_modal(ApprovalAmountModal(self.submission_id, submission["task_reward"]))
+        await interaction.response.send_modal(
+            ApprovalAmountModal(self.submission_id, submission["task_reward"], submission["task_reward_max"])
+        )
 
 
 class RejectSubmissionButton(
@@ -206,7 +213,7 @@ class RejectSubmissionButton(
             )
             return
 
-        embed = build_review_embed(result, result["task_name"], result["task_reward"])
+        embed = build_review_embed(result, result["task_name"], result["task_reward"], result["task_reward_max"])
         embed.color = COLOR_ERROR
         embed.add_field(name="Result", value=f"❌ Rejected by <@{interaction.user.id}>", inline=False)
         await interaction.response.edit_message(embed=embed, view=None)
@@ -398,7 +405,7 @@ async def setup(bot: commands.Bot):
                 return
 
             channel = bot.get_channel(TASK_REVIEW_CHANNEL_ID) or await bot.fetch_channel(TASK_REVIEW_CHANNEL_ID)
-            embed = build_review_embed(submission, task["name"], task["reward"])
+            embed = build_review_embed(submission, task["name"], task["reward"], task["reward_max"])
             view = discord.ui.View(timeout=None)
             view.add_item(ApproveSubmissionButton(submission["id"]))
             view.add_item(RejectSubmissionButton(submission["id"]))

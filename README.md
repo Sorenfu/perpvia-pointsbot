@@ -26,6 +26,7 @@
 - 邀请奖励调整：邀请人奖励从 20 改为 50 积分/人（新人的欢迎奖励仍为 10，未变）。
 - 新增可选的 `ADMIN_ROLE_ID`：配置后，拥有该身份组的成员也能使用全部 `/admin_*` 指令，不再局限于单一 `OWNER_ID`；`OWNER_ID` 始终拥有最高权限，即使不在该身份组内。留空则只有 `OWNER_ID` 能用管理指令，行为不变。
 - `/submit_task` 支持截图证明：新增可选的 `screenshot` 附件参数，可以只提交链接/文字说明、只传截图、或者两者都提交（至少二选一）。审核频道里的消息会直接内嵌显示截图，`/admin_pending_tasks` 兜底列表也会带上截图链接。
+- 任务奖励支持区间：`/admin_add_task`、`/admin_edit_task` 新增可选的 `reward_max` 参数，配合 `reward` 组成"150-400"这样的积分区间，用于按内容质量打分的进阶任务，各处展示统一显示为区间形式。
 
 ## 本次修复
 
@@ -93,6 +94,8 @@ NFT_HOLDER_ROLE_ID=
 - **⭐ Advanced（进阶任务）**：`/complete_task` 会直接拒绝，提示"需要管理员审核"。适合限时活动、有难度、需要提交凭证（截图/链接）核实的任务。运营在群里/私信收集完凭证并确认无误后，用 `/admin_grant_task task_id:<id> member:<@用户> note:<备注>` 手动把这个任务标记为完成并发放积分；发错了可以用 `/admin_revoke_grant task_id:<id> member:<@用户>` 撤销并扣回积分。
 
 **限时任务**：`/admin_add_task` 和 `/admin_edit_task` 都有可选的 `starts_at`（开始时间）/ `ends_at`（截止时间）参数，格式固定为 `YYYY-MM-DD HH:MM`（**北京时间**），例如 `2026-07-20 23:59`。不填表示不限时长期开放。开始前/截止后，`/complete_task` 会拒绝领取，`/tasks` 里也会显示对应的状态（⏳ 未开始 / ⏰ 剩余时间 / 🔴 已截止）。`/admin_grant_task` 手动发放不受时间窗口限制，方便活动结束后仍能给已核实的用户补发。
+
+**积分区间**（适合"按内容质量给分"的进阶任务，比如 UGC 创作）：`reward` 参数在 Discord 里是数字类型，只能填一个整数，不能直接填"150-400"这种区间。要表达区间的话，创建/编辑任务时额外填一个可选的 `reward_max` 参数（必须 ≥ `reward`）——`reward` 当作区间下限，`reward_max` 当作上限。设置后 `/tasks`、审核频道消息、`/admin_list_tasks` 等地方都会显示成"+150–400"这种区间形式；批准审核时弹出的打分输入框也会在提示文字里带上这个区间供参考，但不会强制卡在区间内，管理员仍然可以按实际情况填任意数值。区间机制只对「进阶任务」有意义——「基础任务」是自助领取、没有人工打分这一步，就算设了 `reward_max` 也不会生效，用户拿到的永远是 `reward` 这个下限值。
 
 `/tasks` 现在会把基础任务和进阶任务分区展示，进阶任务的提示文案是"需联系管理员审核"而不是指令用法，避免用户误以为可以自助领取。
 
@@ -168,7 +171,7 @@ python bot.py
 管理员：
 
 - /admin_add_points
-- /admin_add_task（可选 category / starts_at / ends_at 参数，见「任务系统」一节）
+- /admin_add_task（可选 category / starts_at / ends_at / reward_max 参数，见「任务系统」一节）
 - /admin_edit_task（同上）
 - /admin_grant_task（人工审核后，把某个任务的奖励发给指定用户；可选 amount 参数按表现打分覆盖基础积分）
 - /admin_revoke_grant（撤销一次任务发放，扣回对应积分）

@@ -54,6 +54,12 @@ def is_task_open(task) -> bool:
     return True
 
 
+def reward_text(reward: int, reward_max: int | None) -> str:
+    if reward_max is not None and int(reward_max) > int(reward):
+        return f"+{reward}–{reward_max}"
+    return f"+{reward}"
+
+
 def task_window_text(task) -> str:
     now = datetime.now(timezone.utc)
     starts_at = task["starts_at"]
@@ -84,11 +90,12 @@ async def create_task(
     category: str = CATEGORY_BASIC,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
+    reward_max: int | None = None,
 ):
     return await db.fetchrow(
         '''
-        INSERT INTO tasks (name, reward, description, category, starts_at, ends_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO tasks (name, reward, description, category, starts_at, ends_at, reward_max)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
         ''',
         name,
@@ -97,6 +104,7 @@ async def create_task(
         category,
         starts_at,
         ends_at,
+        int(reward_max) if reward_max is not None else None,
     )
 
 
@@ -109,11 +117,12 @@ async def edit_task(
     category: str = CATEGORY_BASIC,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
+    reward_max: int | None = None,
 ):
     return await db.fetchrow(
         '''
         UPDATE tasks
-        SET name=$2, reward=$3, description=$4, category=$5, starts_at=$6, ends_at=$7
+        SET name=$2, reward=$3, description=$4, category=$5, starts_at=$6, ends_at=$7, reward_max=$8
         WHERE id=$1 AND status='ACTIVE'
         RETURNING *
         ''',
@@ -124,6 +133,7 @@ async def edit_task(
         category,
         starts_at,
         ends_at,
+        int(reward_max) if reward_max is not None else None,
     )
 
 
@@ -296,7 +306,7 @@ async def set_submission_message(db, submission_id: int, message_id: int) -> Non
 async def get_submission_with_task(db, submission_id: int):
     return await db.fetchrow(
         '''
-        SELECT s.*, t.name AS task_name, t.reward AS task_reward
+        SELECT s.*, t.name AS task_name, t.reward AS task_reward, t.reward_max AS task_reward_max
         FROM task_submissions s
         JOIN tasks t ON t.id = s.task_id
         WHERE s.id=$1
@@ -308,7 +318,7 @@ async def get_submission_with_task(db, submission_id: int):
 async def list_pending_submissions(db):
     return await db.fetch(
         '''
-        SELECT s.*, t.name AS task_name, t.reward AS task_reward
+        SELECT s.*, t.name AS task_name, t.reward AS task_reward, t.reward_max AS task_reward_max
         FROM task_submissions s
         JOIN tasks t ON t.id = s.task_id
         WHERE s.status='PENDING'

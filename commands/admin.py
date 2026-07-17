@@ -16,6 +16,7 @@ from modules.tasks import (
     parse_task_datetime,
     task_window_text,
     category_label,
+    reward_text,
     list_pending_submissions,
     CATEGORY_BASIC,
     CATEGORY_ADVANCED,
@@ -64,9 +65,11 @@ async def setup(bot: commands.Bot):
 
     @bot.tree.command(name="admin_add_task", description="Admin: create a task")
     @app_commands.describe(
+        reward="Fixed reward, or the minimum if reward_max is set",
         category="Basic = self-serve /complete_task. Advanced = admin must grant it manually.",
         starts_at="Optional start time, Beijing time, format: YYYY-MM-DD HH:MM",
         ends_at="Optional end time, Beijing time, format: YYYY-MM-DD HH:MM",
+        reward_max="Optional: turns reward into a range (reward-reward_max), scored at approval time",
     )
     @app_commands.choices(category=CATEGORY_CHOICES)
     async def admin_add_task(
@@ -77,6 +80,7 @@ async def setup(bot: commands.Bot):
         category: app_commands.Choice[str] | None = None,
         starts_at: str = "",
         ends_at: str = "",
+        reward_max: int | None = None,
     ):
         if not admin_only(interaction):
             await deny(interaction)
@@ -87,14 +91,20 @@ async def setup(bot: commands.Bot):
         except ValueError as exc:
             await interaction.response.send_message(embed=error_embed("Invalid Date", str(exc)), ephemeral=True)
             return
+        if reward_max is not None and reward_max < reward:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Reward Range", "reward_max must be greater than or equal to reward."),
+                ephemeral=True,
+            )
+            return
 
         cat_value = category.value if category else CATEGORY_BASIC
-        task = await create_task(bot.db, name, reward, description, cat_value, starts_dt, ends_dt)
-        await log_admin(bot.db, interaction.user.id, "ADMIN_ADD_TASK", f"{task['id']} {name} {reward} {cat_value}")
+        task = await create_task(bot.db, name, reward, description, cat_value, starts_dt, ends_dt, reward_max)
+        await log_admin(bot.db, interaction.user.id, "ADMIN_ADD_TASK", f"{task['id']} {name} {reward}-{reward_max} {cat_value}")
         await interaction.response.send_message(
             embed=success_embed(
                 "Task Created",
-                f"{EMOJI['task']} #{task['id']} **{name}** - +{reward} points\n"
+                f"{EMOJI['task']} #{task['id']} **{name}** - {reward_text(reward, reward_max)} points\n"
                 f"{category_label(cat_value)} • {task_window_text(task)}",
             ),
             ephemeral=True,
@@ -102,9 +112,11 @@ async def setup(bot: commands.Bot):
 
     @bot.tree.command(name="admin_edit_task", description="Admin: edit an existing task")
     @app_commands.describe(
+        reward="Fixed reward, or the minimum if reward_max is set",
         category="Basic = self-serve /complete_task. Advanced = admin must grant it manually.",
         starts_at="Optional start time, Beijing time, format: YYYY-MM-DD HH:MM",
         ends_at="Optional end time, Beijing time, format: YYYY-MM-DD HH:MM",
+        reward_max="Optional: turns reward into a range (reward-reward_max), scored at approval time",
     )
     @app_commands.choices(category=CATEGORY_CHOICES)
     async def admin_edit_task(
@@ -116,6 +128,7 @@ async def setup(bot: commands.Bot):
         category: app_commands.Choice[str] | None = None,
         starts_at: str = "",
         ends_at: str = "",
+        reward_max: int | None = None,
     ):
         if not admin_only(interaction):
             await deny(interaction)
@@ -126,19 +139,25 @@ async def setup(bot: commands.Bot):
         except ValueError as exc:
             await interaction.response.send_message(embed=error_embed("Invalid Date", str(exc)), ephemeral=True)
             return
+        if reward_max is not None and reward_max < reward:
+            await interaction.response.send_message(
+                embed=error_embed("Invalid Reward Range", "reward_max must be greater than or equal to reward."),
+                ephemeral=True,
+            )
+            return
 
         cat_value = category.value if category else CATEGORY_BASIC
-        task = await edit_task(bot.db, task_id, name, reward, description, cat_value, starts_dt, ends_dt)
+        task = await edit_task(bot.db, task_id, name, reward, description, cat_value, starts_dt, ends_dt, reward_max)
         if not task:
             await interaction.response.send_message(
                 embed=error_embed("Task Not Found", f"No active task with ID #{task_id}."), ephemeral=True
             )
             return
-        await log_admin(bot.db, interaction.user.id, "ADMIN_EDIT_TASK", f"{task_id} {name} {reward} {cat_value}")
+        await log_admin(bot.db, interaction.user.id, "ADMIN_EDIT_TASK", f"{task_id} {name} {reward}-{reward_max} {cat_value}")
         await interaction.response.send_message(
             embed=success_embed(
                 "Task Updated",
-                f"{EMOJI['task']} #{task['id']} **{name}** - +{reward} points\n"
+                f"{EMOJI['task']} #{task['id']} **{name}** - {reward_text(reward, reward_max)} points\n"
                 f"{category_label(cat_value)} • {task_window_text(task)}",
             ),
             ephemeral=True,
@@ -214,7 +233,7 @@ async def setup(bot: commands.Bot):
                 proof = s["proof"] or ("Screenshot only, see link below." if s["proof_image_url"] else "No proof provided.")
                 screenshot_line = f"\n[View screenshot]({s['proof_image_url']})" if s["proof_image_url"] else ""
                 embed.add_field(
-                    name=f"#{s['id']} · {s['task_name']} (+{s['task_reward']} {EMOJI['points']})",
+                    name=f"#{s['id']} · {s['task_name']} ({reward_text(s['task_reward'], s['task_reward_max'])} {EMOJI['points']})",
                     value=(
                         f"By: <@{s['discord_id']}>\nProof: {proof}{screenshot_line}\nSubmitted: {s['created_at']}\n"
                         f"Use `/admin_grant_task task_id:{s['task_id']} member:<user>` to approve manually, "
@@ -263,7 +282,7 @@ async def setup(bot: commands.Bot):
                 desc = t["description"] or "No description"
                 embed.add_field(
                     name=f"#{t['id']} · {t['name']} · {status_text(t['status'])}",
-                    value=f"+{t['reward']} {EMOJI['points']} points\n{desc}\n{category_label(t['category'])} • {task_window_text(t)}",
+                    value=f"{reward_text(t['reward'], t['reward_max'])} {EMOJI['points']} points\n{desc}\n{category_label(t['category'])} • {task_window_text(t)}",
                     inline=False,
                 )
             paginate_footer(embed, page_num, len(chunks))
