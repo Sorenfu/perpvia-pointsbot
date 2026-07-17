@@ -29,6 +29,7 @@
 - 任务奖励支持区间：`/admin_add_task`、`/admin_edit_task` 新增可选的 `reward_max` 参数，配合 `reward` 组成"150-400"这样的积分区间，用于按内容质量打分的进阶任务，各处展示统一显示为区间形式。
 - 每日签到奖励从 10 改为 20 积分/天，新增连续签到奖励：**连续 7 天签到额外 +100 积分**，且每满 7 天循环触发一次（第 7、14、21…天都会再给一次 +100），中断一天会重新从第 1 天算起。`/checkin` 成功后会显示当前连续天数，`/tasks` 里的说明也同步更新。
 - 签到"日"的刷新时间点固定为 **UTC+0 的 00:00**（不再依赖服务器系统本地时区，代码里显式按 UTC 计算，避免部署环境时区不一致导致刷新时间跑偏）。已经签到过的用户再次尝试签到，会提示精确到"小时+分钟"的剩余等待时间（例如"Next check-in in **5h 23m**"），不再只是笼统的"明天再来"。
+- 任务新增可选的 `repeatable` 参数（默认 `false`）：默认每个用户对同一任务只能完成/提交一次防止刷分，设成 `true` 后可以反复完成/提交、反复拿积分。这个改动同时把"防重复"的判定从数据库唯一约束挪到了应用层（配合 Postgres 咨询锁防止并发重复点击的竞态问题），`/admin_revoke_grant` 现在撤销的是"最近一次"完成记录而不是全部历史。详见「任务系统」一节。
 
 ## 本次修复
 
@@ -94,6 +95,10 @@ NFT_HOLDER_ROLE_ID=
 
 - **🌱 Basic（基础任务）**：默认类型。用户在 `/tasks` 里看到后，自己执行 `/complete_task task_id:<id>` 立刻拿积分，机器人不做任何核实（荣誉系统）。适合"关注推特""加入 Telegram""设置头像"这类机器人本来就没法自动验证、刷了也无所谓的低门槛任务。
 - **⭐ Advanced（进阶任务）**：`/complete_task` 会直接拒绝，提示"需要管理员审核"。适合限时活动、有难度、需要提交凭证（截图/链接）核实的任务。运营在群里/私信收集完凭证并确认无误后，用 `/admin_grant_task task_id:<id> member:<@用户> note:<备注>` 手动把这个任务标记为完成并发放积分；发错了可以用 `/admin_revoke_grant task_id:<id> member:<@用户>` 撤销并扣回积分。
+
+**是否可重复提交**：`/admin_add_task`、`/admin_edit_task` 新增可选的 `repeatable` 参数，**默认 `false`**——每个用户对同一个任务只能完成/提交一次，防止刷分（`/complete_task` 再次尝试会提示"Already Completed"，`/submit_task` 会提示"Already Completed"）。设成 `true` 后，该任务允许同一用户反复完成/提交、反复拿积分，适合"每次分享都给积分"这类没有次数上限的任务。这个开关只影响单个任务，不是全局设置，可以有的任务限一次、有的任务不限。
+
+⚠️ 用到 `repeatable` 之后有个连带影响：`/admin_revoke_grant` 撤销的是**该用户对这个任务最近一次的完成记录**，不是清空他在这个任务上的全部历史——如果一个允许重复的任务某用户已经完成 5 次，`/admin_revoke_grant` 只会撤销第 5 次，前 4 次不受影响。
 
 **限时任务**：`/admin_add_task` 和 `/admin_edit_task` 都有可选的 `starts_at`（开始时间）/ `ends_at`（截止时间）参数，格式固定为 `YYYY-MM-DD HH:MM`（**北京时间**），例如 `2026-07-20 23:59`。不填表示不限时长期开放。开始前/截止后，`/complete_task` 会拒绝领取，`/tasks` 里也会显示对应的状态（⏳ 未开始 / ⏰ 剩余时间 / 🔴 已截止）。`/admin_grant_task` 手动发放不受时间窗口限制，方便活动结束后仍能给已核实的用户补发。
 
@@ -173,7 +178,7 @@ python bot.py
 管理员：
 
 - /admin_add_points
-- /admin_add_task（可选 category / starts_at / ends_at / reward_max 参数，见「任务系统」一节）
+- /admin_add_task（可选 category / starts_at / ends_at / reward_max / repeatable 参数，见「任务系统」一节）
 - /admin_edit_task（同上）
 - /admin_grant_task（人工审核后，把某个任务的奖励发给指定用户；可选 amount 参数按表现打分覆盖基础积分）
 - /admin_revoke_grant（撤销一次任务发放，扣回对应积分）
