@@ -49,8 +49,23 @@ BEIJING_TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 DATETIME_INPUT_FORMAT = "%Y-%m-%d %H:%M"
 
 
+async def _lock_user_task(conn, discord_id: int, task_id: int) -> None:
+    """Serializes concurrent completion attempts for the same (discord_id, task_id) pair.
+
+    Must be called inside a transaction — the lock is held until commit/rollback.
+    Needed because user_tasks no longer has a DB-level uniqueness constraint
+    (repeatable tasks require multiple rows per user), so "already completed"
+    is checked at the application level and must be raced-proofed manually.
+    """
+    await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", f"user_task:{discord_id}:{task_id}")
+
+
 def category_label(category: str) -> str:
     return CATEGORY_LABELS.get(category, category)
+
+
+def repeatable_label(repeatable: bool) -> str:
+    return "🔁 Repeatable" if repeatable else "1x per user"
 
 
 def parse_task_datetime(value: str | None) -> datetime | None:
@@ -118,11 +133,12 @@ async def create_task(
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     reward_max: int | None = None,
+    repeatable: bool = False,
 ):
     return await db.fetchrow(
         '''
-        INSERT INTO tasks (name, reward, description, category, starts_at, ends_at, reward_max)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO tasks (name, reward, description, category, starts_at, ends_at, reward_max, repeatable)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
         ''',
         name,
@@ -132,6 +148,7 @@ async def create_task(
         starts_at,
         ends_at,
         int(reward_max) if reward_max is not None else None,
+        bool(repeatable),
     )
 
 
@@ -145,11 +162,12 @@ async def edit_task(
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
     reward_max: int | None = None,
+    repeatable: bool = False,
 ):
     return await db.fetchrow(
         '''
         UPDATE tasks
-        SET name=$2, reward=$3, description=$4, category=$5, starts_at=$6, ends_at=$7, reward_max=$8
+        SET name=$2, reward=$3, description=$4, category=$5, starts_at=$6, ends_at=$7, reward_max=$8, repeatable=$9
         WHERE id=$1 AND status='ACTIVE'
         RETURNING *
         ''',
@@ -161,6 +179,7 @@ async def edit_task(
         starts_at,
         ends_at,
         int(reward_max) if reward_max is not None else None,
+        bool(repeatable),
     )
 
 
@@ -232,22 +251,24 @@ async def complete_task(db, discord_id: int, task_id: int):
             return task, "NOT_STARTED"
         return task, "EXPIRED"
 
-    inserted = await db.fetchrow(
-        '''
-        INSERT INTO user_tasks (discord_id, task_id, awarded_points)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (discord_id, task_id)
-        DO NOTHING
-        RETURNING id
-        ''',
-        int(discord_id),
-        int(task_id),
-        int(task["reward"]),
-    )
-    if not inserted:
-        return task, "ALREADY_DONE"
+    async with db.transaction() as conn:
+        await _lock_user_task(conn, discord_id, task_id)
 
-    await add_points(db, discord_id, int(task["reward"]), "TASK", f"Completed task: {task['name']}")
+        if not task["repeatable"]:
+            existing = await conn.fetchrow(
+                "SELECT id FROM user_tasks WHERE discord_id=$1 AND task_id=$2", int(discord_id), int(task_id)
+            )
+            if existing:
+                return task, "ALREADY_DONE"
+
+        await conn.execute(
+            "INSERT INTO user_tasks (discord_id, task_id, awarded_points) VALUES ($1, $2, $3)",
+            int(discord_id),
+            int(task_id),
+            int(task["reward"]),
+        )
+        await add_points(conn, discord_id, int(task["reward"]), "TASK", f"Completed task: {task['name']}")
+
     return task, "OK"
 
 
@@ -262,33 +283,53 @@ async def grant_task(db, admin_discord_id: int, discord_id: int, task_id: int, n
         return None, "TASK_NOT_FOUND"
 
     award_amount = int(amount) if amount is not None else int(task["reward"])
-    inserted = await db.fetchrow(
-        '''
-        INSERT INTO user_tasks (discord_id, task_id, granted_by, note, awarded_points)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (discord_id, task_id)
-        DO NOTHING
-        RETURNING id
-        ''',
-        int(discord_id),
-        int(task_id),
-        int(admin_discord_id),
-        note,
-        award_amount,
-    )
-    if not inserted:
-        return task, "ALREADY_DONE"
 
-    await add_points(db, discord_id, award_amount, "TASK_GRANT", f"Granted task: {task['name']} (awarded {award_amount}, by admin)")
+    async with db.transaction() as conn:
+        await _lock_user_task(conn, discord_id, task_id)
+
+        if not task["repeatable"]:
+            existing = await conn.fetchrow(
+                "SELECT id FROM user_tasks WHERE discord_id=$1 AND task_id=$2", int(discord_id), int(task_id)
+            )
+            if existing:
+                return task, "ALREADY_DONE"
+
+        await conn.execute(
+            '''
+            INSERT INTO user_tasks (discord_id, task_id, granted_by, note, awarded_points)
+            VALUES ($1, $2, $3, $4, $5)
+            ''',
+            int(discord_id),
+            int(task_id),
+            int(admin_discord_id),
+            note,
+            award_amount,
+        )
+        await add_points(
+            conn, discord_id, award_amount, "TASK_GRANT", f"Granted task: {task['name']} (awarded {award_amount}, by admin)"
+        )
+
     return task, "OK"
 
 
 async def revoke_task_grant(db, discord_id: int, task_id: int):
-    """Undo a task completion (self-serve or granted) and claw back exactly the points that were paid out
-    for that completion — not the task's current base reward, which may have changed since."""
+    """Undo the most recent completion of a task (self-serve or granted) and claw back exactly the
+    points that were paid out for it — not the task's current base reward, which may have changed since.
+
+    Repeatable tasks can have several completions on file; this only undoes the latest one.
+    """
     async with db.transaction() as conn:
         row = await conn.fetchrow(
-            "DELETE FROM user_tasks WHERE discord_id=$1 AND task_id=$2 RETURNING id, awarded_points",
+            '''
+            DELETE FROM user_tasks
+            WHERE id = (
+                SELECT id FROM user_tasks
+                WHERE discord_id=$1 AND task_id=$2
+                ORDER BY completed_at DESC, id DESC
+                LIMIT 1
+            )
+            RETURNING id, awarded_points
+            ''',
             int(discord_id),
             int(task_id),
         )
@@ -327,11 +368,12 @@ async def create_submission(db, discord_id: int, task_id: int, proof: str | None
             return task, None, "NOT_STARTED"
         return task, None, "EXPIRED"
 
-    already_done = await db.fetchrow(
-        "SELECT id FROM user_tasks WHERE discord_id=$1 AND task_id=$2", int(discord_id), int(task_id)
-    )
-    if already_done:
-        return task, None, "ALREADY_DONE"
+    if not task["repeatable"]:
+        already_done = await db.fetchrow(
+            "SELECT id FROM user_tasks WHERE discord_id=$1 AND task_id=$2", int(discord_id), int(task_id)
+        )
+        if already_done:
+            return task, None, "ALREADY_DONE"
 
     try:
         submission = await db.fetchrow(
@@ -395,27 +437,37 @@ async def approve_submission(db, submission_id: int, reviewer_discord_id: int, a
         task = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1", int(submission["task_id"]))
         award_amount = int(amount) if amount is not None else (int(task["reward"]) if task else 0)
 
-        granted = await conn.fetchrow(
-            '''
-            INSERT INTO user_tasks (discord_id, task_id, granted_by, note, awarded_points)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (discord_id, task_id) DO NOTHING
-            RETURNING id
-            ''',
-            int(submission["discord_id"]),
-            int(submission["task_id"]),
-            int(reviewer_discord_id),
-            submission["proof"],
-            award_amount,
-        )
-        if granted and task:
-            await add_points(
-                conn,
-                submission["discord_id"],
-                award_amount,
-                "TASK_GRANT",
-                f"Approved submission: {task['name']} (awarded {award_amount})",
+        await _lock_user_task(conn, submission["discord_id"], submission["task_id"])
+
+        already_granted = False
+        if task and not task["repeatable"]:
+            existing = await conn.fetchrow(
+                "SELECT id FROM user_tasks WHERE discord_id=$1 AND task_id=$2",
+                int(submission["discord_id"]),
+                int(submission["task_id"]),
             )
+            already_granted = existing is not None
+
+        if not already_granted:
+            await conn.execute(
+                '''
+                INSERT INTO user_tasks (discord_id, task_id, granted_by, note, awarded_points)
+                VALUES ($1, $2, $3, $4, $5)
+                ''',
+                int(submission["discord_id"]),
+                int(submission["task_id"]),
+                int(reviewer_discord_id),
+                submission["proof"],
+                award_amount,
+            )
+            if task:
+                await add_points(
+                    conn,
+                    submission["discord_id"],
+                    award_amount,
+                    "TASK_GRANT",
+                    f"Approved submission: {task['name']} (awarded {award_amount})",
+                )
 
         await conn.execute(
             '''

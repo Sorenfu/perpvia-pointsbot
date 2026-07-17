@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     category TEXT NOT NULL DEFAULT 'BASIC',
     starts_at TIMESTAMP,
     ends_at TIMESTAMP,
+    repeatable BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -35,6 +36,7 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS category TEXT NOT NULL DEFAULT 'BASIC
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS starts_at TIMESTAMP;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS ends_at TIMESTAMP;
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS reward_max INTEGER;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS repeatable BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS user_tasks (
     id SERIAL PRIMARY KEY,
@@ -43,9 +45,15 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     granted_by BIGINT,
     note TEXT,
     awarded_points INTEGER,
-    completed_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(discord_id, task_id)
+    completed_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Uniqueness on (discord_id, task_id) used to be enforced at the DB level, but
+-- repeatable tasks now need multiple rows per user. Drop the old constraint for
+-- existing databases; "already completed" is now checked at the application level
+-- (see modules/tasks.py), guarded by a Postgres advisory lock to close the race.
+ALTER TABLE user_tasks DROP CONSTRAINT IF EXISTS user_tasks_discord_id_task_id_key;
+CREATE INDEX IF NOT EXISTS idx_user_tasks_discord_task ON user_tasks(discord_id, task_id);
 
 ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS granted_by BIGINT;
 ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS note TEXT;
@@ -80,8 +88,13 @@ CREATE TABLE IF NOT EXISTS orders (
     product_id INTEGER NOT NULL,
     price INTEGER NOT NULL,
     status TEXT DEFAULT 'SUCCESS',
+    wallet_address TEXT,
+    wallet_verified BOOLEAN,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS wallet_address TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS wallet_verified BOOLEAN;
 
 CREATE INDEX IF NOT EXISTS idx_orders_discord_id ON orders(discord_id);
 

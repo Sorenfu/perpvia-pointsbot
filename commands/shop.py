@@ -73,7 +73,13 @@ class WalletAddressModal(discord.ui.Modal, title="Submit Your EVM Wallet"):
             return
 
         wallet_row = await get_wallet(self.bot.db, self.member.id)
-        redeem_ok, msg = await redeem_product(self.bot.db, self.member, self.product["id"])
+        redeem_ok, msg = await redeem_product(
+            self.bot.db,
+            self.member,
+            self.product["id"],
+            wallet_row["wallet_address"] if wallet_row else None,
+            wallet_row["verified"] if wallet_row else None,
+        )
         embed = success_embed("Redeemed", msg) if redeem_ok else error_embed("Redeem Failed", msg)
         await interaction.response.edit_message(embed=embed, view=None)
 
@@ -108,7 +114,13 @@ class RedeemConfirmView(discord.ui.View):
             return
 
         self.stop()
-        ok, msg = await redeem_product(self.bot.db, self.member, self.product["id"])
+        ok, msg = await redeem_product(
+            self.bot.db,
+            self.member,
+            self.product["id"],
+            self.wallet_row["wallet_address"] if self.wallet_row else None,
+            self.wallet_row["verified"] if self.wallet_row else None,
+        )
         embed = success_embed("Redeemed", msg) if ok else error_embed("Redeem Failed", msg)
         for child in self.children:
             child.disabled = True

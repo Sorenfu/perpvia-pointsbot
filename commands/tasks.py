@@ -26,6 +26,7 @@ from modules.tasks import (
     category_label,
     task_window_text,
     reward_text,
+    repeatable_label,
 )
 from modules.activity import (
     get_today_progress,
@@ -59,7 +60,8 @@ def task_field(row) -> tuple[str, str]:
     else:
         how_to = "Complete it, then contact an admin for review — not self-claimable."
     name = f"#{row['id']} · {row['name']} · {category_label(row['category'])}"
-    value = f"{reward_text(row['reward'], row['reward_max'])} {EMOJI['points']} points\n{desc}\n{window}\n{how_to}"
+    repeat_tag = f" · {repeatable_label(row['repeatable'])}" if row["repeatable"] else ""
+    value = f"{reward_text(row['reward'], row['reward_max'])} {EMOJI['points']} points{repeat_tag}\n{desc}\n{window}\n{how_to}"
     return name, value
 
 

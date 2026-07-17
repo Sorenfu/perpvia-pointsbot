@@ -88,7 +88,9 @@ async def get_redeemed_product_ids(db, discord_id: int) -> set[int]:
     return {int(r["product_id"]) for r in rows}
 
 
-async def redeem_product(db, member, product_id: int):
+async def redeem_product(
+    db, member, product_id: int, wallet_address: str | None = None, wallet_verified: bool | None = None
+):
     async with db.transaction() as conn:
         product = await conn.fetchrow(
             "SELECT * FROM products WHERE id=$1 AND status='ACTIVE' FOR UPDATE",
@@ -118,10 +120,15 @@ async def redeem_product(db, member, product_id: int):
             return False, "Point deduction failed"
 
         await conn.execute(
-            "INSERT INTO orders (discord_id, product_id, price, status) VALUES ($1, $2, $3, 'SUCCESS')",
+            '''
+            INSERT INTO orders (discord_id, product_id, price, status, wallet_address, wallet_verified)
+            VALUES ($1, $2, $3, 'SUCCESS', $4, $5)
+            ''',
             int(member.id),
             int(product_id),
             price,
+            wallet_address,
+            wallet_verified,
         )
 
         if product["stock"] is not None:
@@ -135,3 +142,26 @@ async def redeem_product(db, member, product_id: int):
         return True, f"Redeemed, but role warning: {role_msg}"
 
     return True, f"Redeemed successfully. {role_msg}"
+
+
+async def export_orders(db):
+    """Full redemption history for statistics/export, including the wallet snapshot at redemption time."""
+    return await db.fetch(
+        '''
+        SELECT
+            o.id AS order_id,
+            o.discord_id,
+            u.username,
+            o.product_id,
+            p.name AS product_name,
+            o.price,
+            o.status,
+            o.wallet_address,
+            o.wallet_verified,
+            o.created_at
+        FROM orders o
+        LEFT JOIN products p ON p.id = o.product_id
+        LEFT JOIN users u ON u.discord_id = o.discord_id
+        ORDER BY o.id ASC
+        '''
+    )

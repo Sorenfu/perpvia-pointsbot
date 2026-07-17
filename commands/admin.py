@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import csv
+import io
+from datetime import date
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -17,11 +21,12 @@ from modules.tasks import (
     task_window_text,
     category_label,
     reward_text,
+    repeatable_label,
     list_pending_submissions,
     CATEGORY_BASIC,
     CATEGORY_ADVANCED,
 )
-from modules.shop import create_product, edit_product, remove_product, list_all_products
+from modules.shop import create_product, edit_product, remove_product, list_all_products, export_orders
 from modules.ui import EMOJI, error_embed, info_embed, success_embed, paginate_footer, send_paginated
 
 ADMIN_LIST_PAGE_SIZE = 8
@@ -70,6 +75,7 @@ async def setup(bot: commands.Bot):
         starts_at="Optional start time, Beijing time, format: YYYY-MM-DD HH:MM",
         ends_at="Optional end time, Beijing time, format: YYYY-MM-DD HH:MM",
         reward_max="Optional: turns reward into a range (reward-reward_max), scored at approval time",
+        repeatable="If true, a user can complete/submit this task more than once. Default: false (once per user).",
     )
     @app_commands.choices(category=CATEGORY_CHOICES)
     async def admin_add_task(
@@ -81,6 +87,7 @@ async def setup(bot: commands.Bot):
         starts_at: str = "",
         ends_at: str = "",
         reward_max: int | None = None,
+        repeatable: bool = False,
     ):
         if not admin_only(interaction):
             await deny(interaction)
@@ -99,13 +106,15 @@ async def setup(bot: commands.Bot):
             return
 
         cat_value = category.value if category else CATEGORY_BASIC
-        task = await create_task(bot.db, name, reward, description, cat_value, starts_dt, ends_dt, reward_max)
-        await log_admin(bot.db, interaction.user.id, "ADMIN_ADD_TASK", f"{task['id']} {name} {reward}-{reward_max} {cat_value}")
+        task = await create_task(bot.db, name, reward, description, cat_value, starts_dt, ends_dt, reward_max, repeatable)
+        await log_admin(
+            bot.db, interaction.user.id, "ADMIN_ADD_TASK", f"{task['id']} {name} {reward}-{reward_max} {cat_value} repeatable={repeatable}"
+        )
         await interaction.response.send_message(
             embed=success_embed(
                 "Task Created",
                 f"{EMOJI['task']} #{task['id']} **{name}** - {reward_text(reward, reward_max)} points\n"
-                f"{category_label(cat_value)} • {task_window_text(task)}",
+                f"{category_label(cat_value)} • {repeatable_label(repeatable)} • {task_window_text(task)}",
             ),
             ephemeral=True,
         )
@@ -117,6 +126,7 @@ async def setup(bot: commands.Bot):
         starts_at="Optional start time, Beijing time, format: YYYY-MM-DD HH:MM",
         ends_at="Optional end time, Beijing time, format: YYYY-MM-DD HH:MM",
         reward_max="Optional: turns reward into a range (reward-reward_max), scored at approval time",
+        repeatable="If true, a user can complete/submit this task more than once. Default: false (once per user).",
     )
     @app_commands.choices(category=CATEGORY_CHOICES)
     async def admin_edit_task(
@@ -129,6 +139,7 @@ async def setup(bot: commands.Bot):
         starts_at: str = "",
         ends_at: str = "",
         reward_max: int | None = None,
+        repeatable: bool = False,
     ):
         if not admin_only(interaction):
             await deny(interaction)
@@ -147,18 +158,20 @@ async def setup(bot: commands.Bot):
             return
 
         cat_value = category.value if category else CATEGORY_BASIC
-        task = await edit_task(bot.db, task_id, name, reward, description, cat_value, starts_dt, ends_dt, reward_max)
+        task = await edit_task(bot.db, task_id, name, reward, description, cat_value, starts_dt, ends_dt, reward_max, repeatable)
         if not task:
             await interaction.response.send_message(
                 embed=error_embed("Task Not Found", f"No active task with ID #{task_id}."), ephemeral=True
             )
             return
-        await log_admin(bot.db, interaction.user.id, "ADMIN_EDIT_TASK", f"{task_id} {name} {reward}-{reward_max} {cat_value}")
+        await log_admin(
+            bot.db, interaction.user.id, "ADMIN_EDIT_TASK", f"{task_id} {name} {reward}-{reward_max} {cat_value} repeatable={repeatable}"
+        )
         await interaction.response.send_message(
             embed=success_embed(
                 "Task Updated",
                 f"{EMOJI['task']} #{task['id']} **{name}** - {reward_text(reward, reward_max)} points\n"
-                f"{category_label(cat_value)} • {task_window_text(task)}",
+                f"{category_label(cat_value)} • {repeatable_label(repeatable)} • {task_window_text(task)}",
             ),
             ephemeral=True,
         )
@@ -282,7 +295,7 @@ async def setup(bot: commands.Bot):
                 desc = t["description"] or "No description"
                 embed.add_field(
                     name=f"#{t['id']} · {t['name']} · {status_text(t['status'])}",
-                    value=f"{reward_text(t['reward'], t['reward_max'])} {EMOJI['points']} points\n{desc}\n{category_label(t['category'])} • {task_window_text(t)}",
+                    value=f"{reward_text(t['reward'], t['reward_max'])} {EMOJI['points']} points\n{desc}\n{category_label(t['category'])} • {repeatable_label(t['repeatable'])} • {task_window_text(t)}",
                     inline=False,
                 )
             paginate_footer(embed, page_num, len(chunks))
@@ -390,6 +403,61 @@ async def setup(bot: commands.Bot):
             paginate_footer(embed, page_num, len(chunks))
             pages.append(embed)
         await send_paginated(interaction, pages)
+
+    @bot.tree.command(name="admin_export_orders", description="Admin: export the full shop redemption history as CSV")
+    async def admin_export_orders(interaction: discord.Interaction):
+        if not admin_only(interaction):
+            await deny(interaction)
+            return
+        await interaction.response.defer(ephemeral=True)
+
+        rows = await export_orders(bot.db)
+        if not rows:
+            await interaction.followup.send(
+                embed=info_embed(f"{EMOJI['reward']} Export Orders", "No redemption history yet."), ephemeral=True
+            )
+            return
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "order_id",
+                "discord_id",
+                "username",
+                "product_id",
+                "product_name",
+                "price",
+                "status",
+                "wallet_address",
+                "wallet_verified",
+                "created_at",
+            ]
+        )
+        for r in rows:
+            writer.writerow(
+                [
+                    r["order_id"],
+                    r["discord_id"],
+                    r["username"] or "",
+                    r["product_id"],
+                    r["product_name"] or "",
+                    r["price"],
+                    r["status"],
+                    r["wallet_address"] or "",
+                    "" if r["wallet_verified"] is None else r["wallet_verified"],
+                    r["created_at"],
+                ]
+            )
+
+        file_bytes = io.BytesIO(buffer.getvalue().encode("utf-8"))
+        filename = f"orders_export_{date.today().isoformat()}.csv"
+        await log_admin(bot.db, interaction.user.id, "ADMIN_EXPORT_ORDERS", f"{len(rows)} rows")
+        await interaction.followup.send(
+            embed=success_embed(f"{EMOJI['reward']} Export Ready", f"Exported **{len(rows)}** order(s)."),
+            file=discord.File(file_bytes, filename=filename),
+            ephemeral=True,
+        )
 
     @bot.tree.command(name="admin_stats", description="Admin: show community stats")
     async def admin_stats(interaction: discord.Interaction):
