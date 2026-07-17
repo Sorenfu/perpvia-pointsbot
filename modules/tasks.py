@@ -7,7 +7,34 @@ import asyncpg
 from config import TASK_REVIEW_CHANNEL_ID
 from modules.points import add_points
 
-DAILY_CHECKIN_REWARD = 10
+DAILY_CHECKIN_REWARD = 20
+CHECKIN_STREAK_LENGTH = 7
+CHECKIN_STREAK_BONUS = 100
+CHECKIN_RESET_HOUR_UTC = 0  # the check-in "day" rolls over at 00:00 UTC
+
+
+def current_checkin_period(now: datetime | None = None) -> date:
+    """The check-in 'day' rolls over at 00:00 UTC, so shift back by that offset before taking the date."""
+    now = now or datetime.now(timezone.utc)
+    return (now - timedelta(hours=CHECKIN_RESET_HOUR_UTC)).date()
+
+
+def next_checkin_reset(now: datetime | None = None) -> datetime:
+    now = now or datetime.now(timezone.utc)
+    reset_today = now.replace(hour=CHECKIN_RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
+    return reset_today if now < reset_today else reset_today + timedelta(days=1)
+
+
+def time_until_next_checkin_text(now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    remaining = next_checkin_reset(now) - now
+    total_minutes = max(0, int(remaining.total_seconds() // 60))
+    hours, minutes = divmod(total_minutes, 60)
+    if hours and minutes:
+        return f"{hours}h {minutes}m"
+    if hours:
+        return f"{hours}h"
+    return f"{minutes}m"
 
 CATEGORY_BASIC = "BASIC"
 CATEGORY_ADVANCED = "ADVANCED"
@@ -144,8 +171,26 @@ async def remove_task(db, task_id: int):
     )
 
 
+async def get_checkin_streak(db, discord_id: int) -> int:
+    """Counts consecutive check-in periods ending now (breaks on the first gap)."""
+    rows = await db.fetch(
+        "SELECT checkin_date FROM checkins WHERE discord_id=$1 ORDER BY checkin_date DESC",
+        int(discord_id),
+    )
+    streak = 0
+    expected = current_checkin_period()
+    for row in rows:
+        if row["checkin_date"] == expected:
+            streak += 1
+            expected -= timedelta(days=1)
+        else:
+            break
+    return streak
+
+
 async def daily_checkin(db, discord_id: int):
-    today = date.today()
+    """Returns None if already checked in this period, otherwise {'streak': int, 'bonus_awarded': bool}."""
+    today = current_checkin_period()
     inserted = await db.fetchrow(
         '''
         INSERT INTO checkins (discord_id, checkin_date)
@@ -158,9 +203,18 @@ async def daily_checkin(db, discord_id: int):
         today,
     )
     if not inserted:
-        return False
+        return None
+
     await add_points(db, discord_id, DAILY_CHECKIN_REWARD, "CHECKIN", "Daily check-in")
-    return True
+
+    streak = await get_checkin_streak(db, discord_id)
+    bonus_awarded = streak > 0 and streak % CHECKIN_STREAK_LENGTH == 0
+    if bonus_awarded:
+        await add_points(
+            db, discord_id, CHECKIN_STREAK_BONUS, "CHECKIN_STREAK", f"{CHECKIN_STREAK_LENGTH}-day check-in streak bonus"
+        )
+
+    return {"streak": streak, "bonus_awarded": bonus_awarded}
 
 
 async def complete_task(db, discord_id: int, task_id: int):

@@ -18,6 +18,9 @@ from modules.tasks import (
     set_submission_message,
     is_review_enabled,
     DAILY_CHECKIN_REWARD,
+    CHECKIN_STREAK_LENGTH,
+    CHECKIN_STREAK_BONUS,
+    time_until_next_checkin_text,
     CATEGORY_BASIC,
     CATEGORY_ADVANCED,
     category_label,
@@ -244,7 +247,10 @@ async def setup(bot: commands.Bot):
             embed = base_embed(f"{EMOJI['task']} Community Tasks")
             embed.add_field(
                 name=f"{EMOJI['checkin']} Daily Check-in",
-                value=f"+{DAILY_CHECKIN_REWARD} {EMOJI['points']} points • Use `/checkin`",
+                value=(
+                    f"+{DAILY_CHECKIN_REWARD} {EMOJI['points']} points/day • "
+                    f"🔥 +{CHECKIN_STREAK_BONUS} bonus every {CHECKIN_STREAK_LENGTH} consecutive days • Use `/checkin`"
+                ),
                 inline=False,
             )
             embed.add_field(
@@ -283,17 +289,29 @@ async def setup(bot: commands.Bot):
     @bot.tree.command(name="checkin", description="Daily check-in for points")
     async def checkin(interaction: discord.Interaction):
         await ensure_user(bot.db, interaction.user)
-        ok = await daily_checkin(bot.db, interaction.user.id)
-        if ok:
+        result = await daily_checkin(bot.db, interaction.user.id)
+        if result is None:
+            wait_text = time_until_next_checkin_text()
             await interaction.response.send_message(
-                embed=success_embed("Checked In", f"{EMOJI['checkin']} +{DAILY_CHECKIN_REWARD} {EMOJI['points']} points. See you tomorrow!"),
+                embed=warning_embed(
+                    "Already Checked In", f"You already checked in for this period. Next check-in in **{wait_text}**."
+                ),
                 ephemeral=True,
+            )
+            return
+
+        streak = result["streak"]
+        if result["bonus_awarded"]:
+            description = (
+                f"{EMOJI['checkin']} +{DAILY_CHECKIN_REWARD} {EMOJI['points']} points\n"
+                f"🔥 {streak}-day streak! +{CHECKIN_STREAK_BONUS} {EMOJI['points']} bonus!"
             )
         else:
-            await interaction.response.send_message(
-                embed=warning_embed("Already Checked In", "You already checked in today. Come back tomorrow."),
-                ephemeral=True,
+            description = (
+                f"{EMOJI['checkin']} +{DAILY_CHECKIN_REWARD} {EMOJI['points']} points. "
+                f"Current streak: {streak} day(s). See you tomorrow!"
             )
+        await interaction.response.send_message(embed=success_embed("Checked In", description), ephemeral=True)
 
     @bot.tree.command(name="complete_task", description="Complete a basic task by task ID")
     async def complete_task_command(interaction: discord.Interaction, task_id: int):
